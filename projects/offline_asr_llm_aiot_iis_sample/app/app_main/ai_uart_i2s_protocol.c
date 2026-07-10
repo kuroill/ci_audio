@@ -4,7 +4,6 @@
 #include <string.h>
 
 #include "FreeRTOS.h"
-#include "queue.h"
 #include "semphr.h"
 #include "task.h"
 #include "audio_play_api.h"
@@ -44,15 +43,6 @@
 #define AI_UART_STATE_LISTENING 0x02
 #define AI_UART_STATE_DOWNLINK_PLAYING 0x04
 
-typedef struct
-{
-    uint8_t type;
-    uint8_t seq;
-    uint16_t len;
-    uint8_t payload[AI_UART_RX_MAX_PAYLOAD];
-} ai_uart_command_t;
-
-static QueueHandle_t command_queue;
 static SemaphoreHandle_t send_mutex;
 static volatile uint8_t peer_ready;
 static volatile uint8_t current_state = AI_UART_STATE_WAKEUP_WAIT;
@@ -136,6 +126,7 @@ static void stop_downlink(void)
     if(downlink_codec_started)
     {
         cm_stop_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_INPUT);
+        cm_stop_codec(PLAY_CODEC_ID, CODEC_OUTPUT);
         downlink_codec_started = 0;
     }
     mprintf("[DOWNLINK] stopped bytes=%u\n", (unsigned int)downlink_bytes);
@@ -170,9 +161,9 @@ static uint8_t start_downlink(void)
     }
     stop_play(NULL, NULL);
     downlink_bytes = 0;
+    downlink_codec_started = 1;
     cm_start_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_INPUT);
     cm_start_codec(PLAY_CODEC_ID, CODEC_OUTPUT);
-    downlink_codec_started = 1;
     downlink_enabled = 1;
     send_state(AI_UART_STATE_DOWNLINK_PLAYING);
     mprintf("[DOWNLINK] started owner=ai_uart\n");
@@ -191,7 +182,7 @@ static void mark_peer_rx(void)
     }
 }
 
-static void handle_command(const ai_uart_command_t *cmd)
+void ai_uart_i2s_handle_command(const ai_uart_i2s_command_t *cmd)
 {
     mark_peer_rx();
     switch(cmd->type)
@@ -223,17 +214,23 @@ static void handle_command(const ai_uart_command_t *cmd)
 
 static void post_command_from_isr(uint8_t type, uint8_t seq, const uint8_t *payload, uint16_t len)
 {
-    ai_uart_command_t cmd;
+    sys_msg_t msg;
     BaseType_t higher_priority_task_woken = pdFALSE;
-    memset(&cmd, 0, sizeof(cmd));
-    cmd.type = type;
-    cmd.seq = seq;
-    cmd.len = len;
+    if(len > AI_UART_COMMAND_PAYLOAD_MAX)
+    {
+        dropped_commands++;
+        return;
+    }
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_type = SYS_MSG_TYPE_AI_UART;
+    msg.msg_data.ai_uart_data.type = type;
+    msg.msg_data.ai_uart_data.seq = seq;
+    msg.msg_data.ai_uart_data.len = len;
     if(len)
     {
-        memcpy(cmd.payload, payload, len);
+        memcpy(msg.msg_data.ai_uart_data.payload, payload, len);
     }
-    if(pdPASS != xQueueSendFromISR(command_queue, &cmd, &higher_priority_task_woken))
+    if(pdPASS != send_msg_to_sys_task(&msg, &higher_priority_task_woken))
     {
         dropped_commands++;
     }
@@ -303,20 +300,14 @@ int ai_uart_i2s_peer_ready(void)
     return peer_ready ? 1 : 0;
 }
 
-static void protocol_task(void *arg)
+static void heartbeat_task(void *arg)
 {
-    ai_uart_command_t cmd;
     TickType_t last_ping = 0;
     static const uint8_t heartbeat[3] = {0x06, 0x13, 0x01};
     (void)arg;
     for(;;)
     {
         TickType_t now = xTaskGetTickCount();
-        if(pdPASS == xQueueReceive(command_queue, &cmd, pdMS_TO_TICKS(AI_UART_TASK_POLL_MS)))
-        {
-            handle_command(&cmd);
-        }
-        now = xTaskGetTickCount();
         if((now - last_ping) >= pdMS_TO_TICKS(AI_UART_HEARTBEAT_MS))
         {
             last_ping = now;
@@ -336,21 +327,21 @@ static void protocol_task(void *arg)
             dropped_commands = 0;
             mprintf("[AI_UART] command queue overflow dropped=%u\n", (unsigned int)dropped);
         }
+        vTaskDelay(pdMS_TO_TICKS(AI_UART_TASK_POLL_MS));
     }
 }
 
 void ai_uart_i2s_protocol_init(void)
 {
     BaseType_t task_created;
-    command_queue = xQueueCreate(8, sizeof(ai_uart_command_t));
     send_mutex = xSemaphoreCreateMutex();
-    CI_ASSERT(command_queue && send_mutex, "ai uart resources\n");
-    __eclic_irq_set_vector(UART1_IRQn, (int32_t)uart_irq_handler);
-    UARTInterruptConfig((UART_TypeDef *)AI_UART_CONTROL_UART, AI_UART_CONTROL_BAUDRATE);
-    task_created = xTaskCreate(protocol_task, "ai_uart", 512, NULL, 3, NULL);
+    CI_ASSERT(send_mutex, "ai uart resources\n");
+    task_created = xTaskCreate(heartbeat_task, "ai_uart", 384, NULL, 3, NULL);
     CI_ASSERT(pdPASS == task_created, "ai uart task\n");
     task_created = xTaskCreate(downlink_task, "ai_downlink", 512, NULL, 4, NULL);
     CI_ASSERT(pdPASS == task_created, "ai downlink task\n");
+    __eclic_irq_set_vector(UART1_IRQn, (int32_t)uart_irq_handler);
+    UARTInterruptConfig((UART_TypeDef *)AI_UART_CONTROL_UART, AI_UART_CONTROL_BAUDRATE);
     send_state(AI_UART_STATE_WAKEUP_WAIT);
 }
 

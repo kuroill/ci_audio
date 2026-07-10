@@ -667,7 +667,7 @@ void audio_pre_rslt_out_codec_init(void)
     uint16_t block_size = AUDIO_CAP_POINT_NUM_PER_FRM * 2 * sizeof(int16_t);
     cm_reg_codec(PLAY_PRE_AUDIO_CODEC_ID, (cm_codec_hw_info_t*)&audio_pre_tslt_out_info);
 
-    cm_pcm_buffer_info_t pcm_buffer_info;
+    cm_pcm_buffer_info_t pcm_buffer_info = {0};
     pcm_buffer_info.play_buffer_info.block_num = 1;
     #if USE_DENOISE_NN || USE_AI_DOA
     #if NET_AUDIO_PLAY_BY_OPUS||NET_AUDIO_PLAY_BY_PCM
@@ -686,19 +686,15 @@ void audio_pre_rslt_out_codec_init(void)
     //配置IIS放音音频格式
     cm_config_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_OUTPUT, &pre_rslt_out_sound_info);
 
-    cm_pcm_buffer_info_t input_buffer_info;
-    input_buffer_info.record_buffer_info.block_num = 8;
-    input_buffer_info.record_buffer_info.block_size = AUDIO_CAP_POINT_NUM_PER_FRM * sizeof(int16_t);
-    input_buffer_info.record_buffer_info.buffer_size = input_buffer_info.record_buffer_info.block_size * input_buffer_info.record_buffer_info.block_num;
-    input_buffer_info.record_buffer_info.pcm_buffer = pvPortMalloc(input_buffer_info.record_buffer_info.buffer_size);
-    CI_ASSERT(input_buffer_info.record_buffer_info.pcm_buffer,"\n");
-    cm_config_pcm_buffer(PLAY_PRE_AUDIO_CODEC_ID, CODEC_INPUT, &input_buffer_info);
-
-    cm_sound_info_t downlink_in_sound_info = {0};
-    downlink_in_sound_info.sample_rate = 16000;
-    downlink_in_sound_info.channel_flag = 1;
-    downlink_in_sound_info.sample_depth = IIS_DW_16BIT;
-    cm_config_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_INPUT, &downlink_in_sound_info);
+    /*
+     * IIS0 input is configured once by ref_in_codec_registe(). Both
+     * REF_RECORD_CODEC_ID and PLAY_PRE_AUDIO_CODEC_ID are codec 0. A second
+     * CODEC_INPUT configuration here replaces the live SDK buffer and corrupts
+     * the codec-manager/nuclear-com startup transaction.
+     *
+     * The ESP downlink reader consumes the existing codec-0 input buffer; only
+     * the output half is owned by this initializer.
+     */
 }
 
 #if USE_AUDIO_UPLOAD_BY_IIS

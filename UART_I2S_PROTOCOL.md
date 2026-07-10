@@ -1,0 +1,456 @@
+# CI1306 <-> ESP32 UART / I2S 生产协议（最终版）
+
+本文档描述 `lenwell-firmware` 与 `ci_audio` 的目标生产协议，作为实施与验收的唯一依据。
+
+## 1. 职责划分
+
+### 1.1 CI1306
+
+- 负责本地唤醒词检测。
+- 负责播放本地唤醒提示音 `voice_id=1000`。
+- 负责 AEC/SSP 前端处理。
+- 负责通过 I2S 持续输出 AEC/SSP 后上行 PCM。
+- 负责接收 ESP32 下行 PCM 并驱动本地喇叭播放。
+- 通过 UART 只发送唤醒、提示音完成、上行参数、状态和 ACK。
+
+### 1.2 ESP32-S3
+
+- 启动后立即初始化 CI UART 和 I2S master。
+- 始终读取 CI1306 上行 I2S PCM；未唤醒或不需要上传时直接丢弃。
+- 只在待唤醒阶段学习环境 RMS 参考值；唤醒进入连续对话后冻结该基准，直到回到待唤醒再更新。
+- 唤醒后使用 ESP-SR VAD + 自适应 RMS 环境参考决定是否是真人语音。
+- 确认语音后才创建 HTTP voice upload，补发 pre-roll，并把 Opus 上云。
+- 接收 HTTP downlink Opus，解码为 16 kHz PCM 后通过 I2S 推给 CI1306 播放。
+- 播放期间继续读取上行 PCM，避免 DMA 堵塞和下一轮丢头。
+- 独立维护"CI 对端存活"状态，与 CI 侧的对端超时检测对称（见 7.1）。
+
+## 2. 生产接线
+
+### 2.1 UART 控制通道
+
+生产 UART 使用 CI1306 开发板右侧 `IIC/UART1` 引脚，避免占用 Type-C/CH340 的 UART0。
+
+| 信号 | CI1306 开发板 | ESP32 GPIO | 方向 | 说明 |
+|---|---|---:|---|---|
+| UART TX1 | PB7 / SDA / TX1 | GPIO16 / UART_RX | CI -> ESP32 | CI 发送 PING、WAKE、UPLINK_READY、DING_DONE、STATE、ACK |
+| UART RX1 | PC0 / SCL / RX1 | GPIO15 / UART_TX | ESP32 -> CI | ESP32 发送 PONG、START_DOWNLINK、STOP_DOWNLINK、ENTER_WAKEUP_WAIT |
+| GND | GND | GND | - | 两板必须共地 |
+
+左侧 `PA2/TX1`、`PA3/RX1` 不用于 UART，因为已固定分配给 I2S。
+
+> ⚠️ **生产接线强提示**：开发板丝印上 `TX1/RX1` 标签在左右两组物理引脚上各出现一次，功能完全不同——右侧是本节的 UART 信号，左侧实际是 2.2 节的 I2S 下行 DATA 和 WS 信号。生产 SOP 必须用颜色或编号强制区分这两组标签，首件须用万用表或示波器实测确认引脚功能后再批量接线。
+
+### 2.2 I2S 音频通道
+
+ESP32 是 I2S master，CI1306 是 I2S slave。ESP32 从启动开始持续输出 BCLK/LRCK。
+
+| 信号 | CI1306 开发板 | ESP32 GPIO | 方向 | 说明 |
+|---|---|---:|---|---|
+| BCLK/SCK | SCK / PA5 / TX2 | GPIO5 / I2S_BCLK | ESP32 -> CI | bit clock |
+| WS/LRCK | LRCK / PA3 / RX1 | GPIO6 / I2S_WS | ESP32 -> CI | word select |
+| 上行 DATA | SDO / PA4 | GPIO4 / I2S_DIN | CI -> ESP32 | CI 输出 AEC/SSP 后 PCM |
+| 下行 DATA | SDI / PA2 / TX1 | GPIO7 / I2S_DOUT | ESP32 -> CI | ESP32 推送 TTS PCM |
+| MCLK | MCK / PA6 / RX2 | 不接 | - | 当前协议不依赖 MCLK |
+| GND | GND | GND | - | 与 UART 共地 |
+
+## 3. 音频格式
+
+### 3.1 上行 CI -> ESP32
+
+- sample rate：16000 Hz。
+- sample format：signed 16-bit little-endian PCM。
+- physical layout：standard I2S stereo slots，同一 mono 样本同时写入 left/right slot。
+- semantic layout：mono 用户语音。
+- CI1306 `ci_ssp_config.c` 将 AEC/SSP 后的 `DST1` 同时写入 left/right slot。
+- ESP32 按 16 kHz stereo RX 读取，取 left slot 作为 mono 上云样本。
+- 不允许把 interleaved stereo bytes 直接当作 mono 连续样本处理。
+- 由于 ESP32 作为 I2S master 从握手起就持续以固定 BCLK/LRCK（2-slot 帧结构）驱动总线，双 slot 复制不额外占用总线带宽，只是 CI 侧内部多一次数据拷贝，属于刻意保留的稳定方案。
+
+CI1306 侧关键配置：
+
+- `USE_IIS1_OUT_PRE_RSLT_AUDIO=1`。
+- `AI_I2S_RUNTIME_UPLINK_EN=1`。
+- `AI_I2S_UPLINK_MONO_EN=0`。
+- `iis_left_channel=DST1`。
+- `iis_right_channel=DST1`。
+- `vad_mark_enable=false`。
+
+### 3.2 下行 ESP32 -> CI
+
+- sample rate：16000 Hz。
+- sample format：signed 16-bit little-endian PCM。
+- semantic layout：mono TTS PCM。
+- physical layout：与上行对称，ESP32 把同一个 mono 样本同时写入 left/right 两个 physical slot，不把 mono 样本流当作连续字节直接推给双 slot 的物理帧结构。
+- 非下行播放期间（握手完成后尚未 `START_DOWNLINK`、或 `STOP_DOWNLINK` 之后），ESP32 必须持续在 DOUT 上输出全零静音 PCM，不能停止写入或让线路悬空。
+- ESP32 发送 `START_DOWNLINK` 并收到 ACK 后开始写 I2S DOUT 真实 TTS 数据。
+- ESP32 发送 `STOP_DOWNLINK` 后结束本轮 TTS 推送，随后立即切回输出静音 PCM。
+- CI1306 停止下行播放链路，但上行 AEC mic 流不因下行结束而停止。
+
+## 4. 单麦 AEC 接线
+
+当前硬件使用单麦 AEC：
+
+- 用户真实麦克风接 `L MIC`。
+- `MICR` 不接第二个真实麦克风，作为喇叭参考输入。
+- AEC 四针短接：
+
+```text
+GND   <-> MICR-
+SPK-  <-> MICR+
+```
+
+要求：
+
+- `PAUSE_VOICE_IN_WITH_PLAYING` 保持关闭，播放时不能暂停采音、AEC/SSP 或 I2S 上行。
+- AEC 只做回声抑制，不决定是否上传，也不直接决定是否打断。
+- 播放中是否打断由 ESP32 使用 AEC 后 PCM、本地 VAD、能量和状态机判断。
+- 参考信号和麦克风信号都不能削顶；播放中识别差时优先检查 mic/ref/dst 幅值。
+
+## 5. UART 帧格式
+
+UART 只传事件、状态和命令，不传连续音频。
+
+```text
+A5 5A VER TYPE SEQ LEN_L LEN_H PAYLOAD CRC8
+```
+
+- `VER` 固定为 `0x04`。
+- `SEQ` 由发送方自增，8 bit 回绕。
+- `LEN_L/LEN_H` 为 payload little-endian 长度。
+- ESP32 parser 最大 payload 长度为 64 bytes。
+- CI1306 发送 buffer 把 payload 限制在 48 bytes 内。
+- `CRC8` 对 `VER..PAYLOAD` 计算，不包含 `A5 5A`，多项式 `0x07`，初始值 `0x00`。
+- ESP32 收到非法 version、超长 payload、CRC 错误或未知 type 时丢弃该帧。
+
+## 6. UART 消息类型
+
+| TYPE | 名称 | 方向 | Payload | 处理 |
+|---:|---|---|---|---|
+| `0x03` | `ACK` | CI -> ESP32 | `[seq, status]` | 见 6.1，关键命令必须按 status 处理 |
+| `0x05` | `PING` | 双向 | `06 13 01` | 收到后回复 `PONG` |
+| `0x06` | `PONG` | 双向 | `06 13 01` | CI 标记 peer ready；ESP32 仅解析 |
+| `0x10` | `WAKE_DETECTED` | CI -> ESP32 | `wake_id:u16le` | ESP32 进入或重置语音对话 |
+| `0x11` | `DING_DONE` | CI -> ESP32 | 空 | ESP32 只记录 |
+| `0x12` | `UPLINK_READY` | CI -> ESP32 | `80 3E 00 10 02` | ESP32 校验 16000/16bit/2 physical slots，失败处理见 6.2 |
+| `0x16` | `STATE` | CI -> ESP32 | `[state]` | ESP32 记录并比对本地状态，见 6.2 |
+| `0x18` | `FIRMWARE_INFO` | CI -> ESP32 | `[format=0x01, version:6 bytes, active_slot, boot_state]` | CI 握手后报告当前固件与启动结果；为 CI OTA 预留，暂未实现 |
+| `0x22` | `START_DOWNLINK` | ESP32 -> CI | 空 | CI 启动下行播放并 ACK |
+| `0x23` | `STOP_DOWNLINK` | ESP32 -> CI | 空 | CI 停止下行播放、回 `STATE=0x02` 并 ACK |
+| `0x25` | `ENTER_WAKEUP_WAIT` | ESP32 -> CI | 空 | CI 退出对话态、回 `STATE=0x01` 并 ACK |
+| `0x28` | `ENTER_OTA_MODE` | ESP32 -> CI | `[ota_ver=0x01, image_size:u32le, sha256:32 bytes]` | 请求进入 CI OTA 独占维护模式；为 CI OTA 预留，暂未实现 |
+
+### 6.1 ACK status 与失败处理
+
+| status | 含义 |
+|---:|---|
+| `0x00` | OK |
+| `0x02` | unsupported command |
+| `0x03` | command failed |
+
+ESP32 对以下三类命令的 ACK 必须按 status 分支处理，不能只记录/忽略：
+
+- **`START_DOWNLINK`** 收到非 `0x00` ACK：不得开始写 DOUT 真实 PCM，继续输出静音，记录错误日志并重试一次；重试仍失败则放弃本轮下行播放，直接进入下一轮等待，不等待对端超时。
+- **`STOP_DOWNLINK`** 收到非 `0x00` ACK：立即在本地停止写入真实 PCM 并切回静音，记录错误日志、计入异常统计，不依赖 CI 侧确认。
+- **`ENTER_WAKEUP_WAIT`** 收到非 `0x00` ACK：记录错误日志并重试一次；仍失败则本地强制回到等待唤醒态，避免两端状态永久不一致。
+
+`约 3000ms` 的对端超时（见 7.1）是链路真正断开时的兜底手段，不是命令执行失败时唯一的恢复路径。
+
+### 6.2 STATE 值与 UPLINK_READY 校验
+
+| state | 含义 |
+|---:|---|
+| `0x01` | CI 待唤醒 |
+| `0x02` | CI 对话监听中 |
+| `0x04` | CI 下行播放中 |
+| `0x08` | CI OTA 独占维护中（规划状态，暂未实现） |
+
+`STATE` 不作为 ESP32 状态机的前置触发条件，但 ESP32 应记录"本地状态 vs 最近一次收到的 CI STATE"是否一致，连续多次不一致时打印告警日志，便于排查两端状态漂移。
+
+`UPLINK_READY` 参数校验失败（收到的不是 `80 3E 00 10 02`）时：
+
+- ESP32 不得据此更新本地对上行参数的假设，继续按 16000/16bit/2 slots 处理上行数据；
+- 打印明确错误日志（记录实际收到的原始 payload），并计入统计上报，便于量产阶段发现批量固件配置错误。
+
+## 7. 时序
+
+### 7.1 上电、握手与持续上行
+
+1. CI1306 上电后必须能独立本地工作；即使不接 ESP32，也仍然可以本地唤醒并播放 ding。
+2. ESP32 启动后初始化 UART 和 I2S master，持续输出 BCLK/LRCK，开始读取/丢弃 CI 上行 PCM，同时在 DOUT 上输出静音 PCM。
+3. CI1306 初始化 UART1，发送 `PING(06 13 01)` 和 `STATE=0x01`。
+4. CI 收到 ESP32 的 `PING` 或 `PONG` 后标记 `peer_ready=1`。
+5. CI 音频输入任务初始化 AEC/SSP 和 I2S 上行输出 codec；`audio_pre_rslt_write_data()` 只以 `peer_ready` 作为持续写入前置条件，不等待唤醒词。
+6. 握手成功后，CI 开始把 AEC/SSP 后 `DST1` PCM 持续写入 I2S 上行；这一步发生在唤醒前。
+7. ESP32 在未唤醒时持续读取、丢弃上行 PCM，并学习环境 RMS 参考。
+8. CI 每 1000 ms 发送一次 `PING` 维持 heartbeat。
+9. CI 如果约 3000 ms 没收到 ESP32 的有效 UART 帧，标记 peer lost，停止下行和上行 codec，回未握手态。
+10. ESP32 如果约 3000 ms 没收到 CI 的任何有效 UART 帧，同样标记 CI peer lost：
+    - 停止向 HTTP 层提交任何正在进行的语音上传/下行流程；
+    - 本地状态强制回到"等待 WAKE_DETECTED"，继续输出静音 PCM、继续读取并丢弃上行；
+    - 记录日志（见 8.1），一旦重新收到 CI 的有效帧，按步骤 3-6 正常握手，无需重启 ESP32。
+
+`UPLINK_READY` 不是开麦命令，也不是开始持续上行的触发条件。握手 ready 后上行保持常开。
+
+### 7.2 唤醒只切换对话状态
+
+1. CI 检测到唤醒词。
+2. CI 如正在播放本地提示音或下行 TTS，会停止当前播放链路。
+3. CI 发送 `WAKE_DETECTED`，并播放本地 ding。
+4. CI 进入对话监听态，发送 `STATE=0x02`。
+5. CI 发送 `UPLINK_READY(80 3E 00 10 02)` 作为上行参数通知，表示 16000 Hz / 16-bit / 2ch physical slots。
+6. `UPLINK_READY` 不要求等待本地 ding 播放完成；也不启动 I2S，因为 I2S 上行已经在握手后持续运行。
+7. CI 本地 ding 播放完成后发送 `DING_DONE`；只表示提示音结束，不是 ESP32 启动上行的前置条件。
+8. ESP32 收到 `WAKE_DETECTED` 后从"环境学习/丢弃音频"切到"本地 VAD + 云端上传候选"状态。
+9. ESP32 收到 `UPLINK_READY` 只校验参数，不发送开麦命令，也不把它当作开始读取 I2S 的条件；校验失败处理见 6.2。
+10. 对话期内 CI 不因单轮 HTTP upload 结束或 `STOP_DOWNLINK` 停止上行；ESP32 必须持续读取 I2S，防止上行 DMA 堆积或丢失下一句话开头。
+11. ESP32 不把每段用户语音结束映射为上行停止；每段语音的结束只对应云端 voice finish，不对应 CI I2S 上行停止。
+
+### 7.3 ESP32 上云
+
+1. ESP32 从握手后就持续读取 60 ms 左右的上行帧；唤醒后才允许这些帧进入本地 VAD/上传 gate。
+2. 每帧计算 RMS、peak、mean、zero-crossing；zero-crossing 仅用于日志/观察，不作为门限。
+3. ESP32 使用 ESP-SR VAD 判断 speech/silence。
+4. ESP32 使用待唤醒阶段学习到的环境 RMS 计算动态 `minSpeechRms`；对话期、播放期和 follow-up quiet 不更新该基准。
+5. 只有 `ESP-SR VAD=speech` 且 `frame.rms > minSpeechRms` 时，才进入本地上传 gate。
+6. 连续 speech 达到 `VOICE_VAD_START_MS` 后打开 HTTP upload，并补发 `VOICE_PRE_ROLL_MS`。
+7. 连续 silence 达到 `VOICE_VAD_END_SILENCE_MS` 后结束 HTTP upload。
+8. CI 上行 I2S 不因单轮 upload 结束而停止。
+
+低延迟默认值（`src/config.rs`）：
+
+| 配置 | 默认值 | 说明 |
+|---|---:|---|
+| `VAD_START_TIMEOUT_MS` | 8000 | 等待用户开始说话的最长时间；连续对话避免 2 秒短窗口切碎用户语音 |
+| `VOICE_PRE_ROLL_MS` | 180 | speech 确认后补发的前置缓存 |
+| `VOICE_VAD_START_MS` | 120 | 连续 speech 确认时长 |
+| `VOICE_VAD_END_SILENCE_MS` | 420 | 连续 silence 结束时长 |
+| `VOICE_VAD_MIN_RMS` | 350 | 环境参考未初始化时的安全下限 |
+| `VOICE_WAKE_DING_GUARD_MS` | 900 | 首轮等待 `DING_DONE` 或短超时，避免本地提示音上云 |
+| `VOICE_FOLLOWUP_QUIET_MS` | 600 | 后续轮次开始前的声学安静窗口 |
+| `VOICE_FOLLOWUP_QUIET_TIMEOUT_MS` | 2000 | 等待安静窗口的最长时间 |
+| `VOICE_FOLLOWUP_VAD_MIN_RMS` | 700 | 后续轮次开始上传的最低 RMS，避免播放尾音/低能量残留误上云 |
+
+### 7.4 下行播放
+
+1. ESP32 收到服务端 result 后启动 HTTP downlink worker。
+2. ESP32 下载长度前缀 Opus 包，解码为 16 kHz mono PCM。
+3. ESP32 使用短预缓冲后发送 `START_DOWNLINK`。
+4. ESP32 必须等待收到 CI 对 `START_DOWNLINK` 的 ACK（status=0x00）之后，再等待 `DOWNLINK_START_SETTLE_MS`，才允许开始写入真实 TTS PCM；该延迟锚定在收到 ACK 之后，不是命令发出后的盲等定时器。若 ACK 超时或 status 非 0x00，按 6.1 处理，不写入真实 PCM。
+5. CI ACK 并发送 `STATE=0x04`，启动本地下行播放链路。
+6. ESP32 通过 I2S DOUT 写 PCM。
+7. 自然播放结束时，ESP32 写完全部 PCM 后必须继续发送 40-100 ms 全零静音 PCM，用于排空 CI 接收和播放缓冲区。
+8. 静音排空结束后，ESP32 必须发送 `STOP_DOWNLINK`；CI 收到后只停止 I2S RX 和本地播放输出，返回 ACK 并发送 `STATE=0x02`。`STOP_DOWNLINK` 不得停止麦克风采集、AEC/SSP 或 I2S TX 上行。
+9. 播放被唤醒词/真人语音打断、下行 worker 异常退出或整轮对话退出恢复时，ESP32 也必须发送 `STOP_DOWNLINK` 作为强制停止命令。
+10. ESP32 播放期间和播放后短沉降期间继续读取并丢弃上行，避免 TTS 尾音污染下一轮。
+
+低延迟默认值：
+
+| 配置 | 默认值 | 说明 |
+|---|---:|---|
+| `VOICE_HTTP_PLAYBACK_PREBUFFER_MS` | 120 | 下行 PCM 预缓冲，配置读取范围 60..240 ms |
+| `VOICE_PLAYBACK_SETTLE_MS` | 400 | 播放结束后的上行沉降 drain |
+| `DOWNLINK_START_SETTLE_MS` | 30 | `START_DOWNLINK` ACK 之后 ESP32 等 CI 播放链路稳定的内部延迟 |
+
+`playback_prebuffer_pcm_bytes()` 把预缓冲硬限制在最多 240 ms，即使 `.env` 写了更大的值，也不会超过该上限。
+
+### 7.5 退出对话
+
+1. ESP32 连续对话空闲超时、用户明确结束、系统维护或错误恢复时发送 `ENTER_WAKEUP_WAIT`。
+2. CI ACK。
+3. CI 清理对话态和下行播放状态，发送 `STATE=0x01`。
+4. ESP32 回到等待 `WAKE_DETECTED`，同时继续读取/丢弃上行 PCM 并学习环境参考。
+5. 若步骤 2 的 ACK 非 `0x00` 或超时，按 6.1 处理：重试一次，仍失败则本地强制回到等待唤醒态，不等待对端超时。
+
+## 8. 日志检查点
+
+### 8.1 ESP32
+
+关键日志：
+
+```text
+CI UART RX frame: type=PING
+CI UART TX frame: type=PONG
+waiting for CI1306 wake event while continuously draining CI uplink PCM
+CI wake detected
+CI uplink ready observed in always-on mode
+start CI uplink capture gate
+CI uplink I2S level: ... noiseRms=... minSpeechRms=... espVad=... acoustic=...
+ESP VAD speech confirmed for cloud upload
+voice http upload buffering opened
+voice http CI upload finished
+voice http CI downlink jitter buffer
+CI downlink playback start
+voice http CI stream downlink starts after prebuffer
+voice http CI stream playback completed
+CI peer timeout on ESP32 side, stop uplink gate and revert to wakeup-wait
+CI ACK status=0x02/0x03 for START_DOWNLINK, retrying
+CI ACK status=0x02/0x03 for STOP_DOWNLINK, forcing local mute
+CI ACK status=0x02/0x03 for ENTER_WAKEUP_WAIT, forcing local wakeup-wait
+UPLINK_READY payload mismatch, expected 80 3E 00 10 02 got ...
+local STATE vs CI reported STATE mismatch, count=...
+```
+
+如果 `espVad=speech` 但 `acoustic=silence`，优先看 `rms` 是否真的大于 `minSpeechRms`。zero-crossing 不决定是否上传。
+
+### 8.2 CI1306
+
+关键日志：
+
+```text
+AI_UART TX PING
+AI_UART RX PONG
+AI_UART TX WAKE_DETECTED
+AI_UART TX UPLINK_READY
+AI_UART WAKE_DING play requested
+AI_UART TX DING_DONE
+AI_UART RX START_DOWNLINK
+AI_UART DOWNLINK start ok
+AI_UART RX STOP_DOWNLINK
+AI_UART DOWNLINK stop bytes=...
+AI_UART RX ENTER_WAKEUP_WAIT
+```
+
+如果 CI 约 3 秒未收到 ESP32 有效帧，应看到：
+
+```text
+AI_UART peer timeout, stop continuous uplink and restart handshake
+```
+
+## 9. 打包与验证约束
+
+- `ci_audio` 只能在 Windows SDK 环境完整打包固件；macOS 只做代码修改和静态检查。
+- 不要用未知工具重新生成 CI1306 全量布局。
+- CI1306 验证包按固定布局只替换 `user_code` 槽：
+  - `user_code` offset：`0x4000`
+  - `user_code` slot size：`0x25000` / `151552 bytes`
+  - `0x0000..0x3FFF` 与已验证底包一致
+  - `0x29000..EOF` 与已验证底包一致
+
+## 10. 设计约束
+
+- 不让 CI 端 VAD 决定云端 upload，上传边界完全由 ESP32 侧 VAD + RMS gate 决定。
+- 不在 ESP32 侧把 I2S stereo bytes 直接当 mono 连续样本处理，上下行均按 2-slot 物理帧解析/封装。
+- 不用手动 RMS-above-noise 或 zero-crossing 数量调 gate；gate 以环境 RMS 参考为准。
+- 不把 `AI_I2S_UPLINK_MONO_EN` 改为 `1`；双 slot 复制方案已验证稳定，且不影响总线带宽。
+- 不在任何 ACK 失败场景下把约 3000ms 对端超时当作唯一恢复手段；关键命令必须先走 6.1 的重试/本地强制回退逻辑。
+- 播放期间不暂停采音、AEC/SSP 或 I2S 上行（`PAUSE_VOICE_IN_WITH_PLAYING` 保持关闭）。
+
+## 11. 实施检查清单
+
+- [ ] 3.2：ESP32 下行写入前确认 mono 样本已复制到 left/right 两个 physical slot
+- [ ] 3.2 / 7.1：ESP32 在非播放期间（含启动后、STOP_DOWNLINK 后）DOUT 持续输出静音 PCM
+- [ ] 6.1：START_DOWNLINK / STOP_DOWNLINK / ENTER_WAKEUP_WAIT 的 ACK status 均已接入失败处理分支
+- [ ] 6.2：UPLINK_READY 参数校验失败时有日志且不误更新本地参数假设
+- [ ] 7.1：ESP32 侧新增约 3000ms 对端超时检测，日志格式与 8.1 一致
+- [ ] 7.4：DOWNLINK_START_SETTLE_MS 锚定在收到 ACK 之后，而非命令发出后盲等
+- [ ] 2.1：生产接线 SOP / 首件检验已加入 TX1/RX1 歧义提示
+- [ ] 8.1：全部关键日志已补齐，便于量产阶段远程排障
+
+## 12. CI1306 OTA 规划（暂不实现）
+
+> 本节定义后续 CI1306 OTA 的生产约束和协议边界，当前 `lenwell-firmware` 与 `ci_audio` 均不得据此声明 CI OTA 已实现。正式开发前还需要冻结启英泰伦 FW_V4 OTA 数据帧的逐字节定义，并在 Windows SDK 和实机上验证双槽启动、掉电恢复与自动回滚。
+
+### 12.1 目标与范围
+
+- ESP32 负责通过 HTTPS 完整下载 CI1306 升级包，并在发送给 CI 前校验云端下发的 SHA-256。
+- CI1306 升级期间允许停止全部音频和对话能力，只保留 UART1 OTA、Flash 写入、看门狗和必要错误日志。
+- UART1 始终只有一个 owner。正常模式由 Lenwell `A5 5A` parser 持有；OTA 模式由同一 owner 将收到的字节转交启英泰伦 FW_V4 `A5 0F` OTA parser。OTA 代码不得重新注册或覆盖 UART1 ISR。
+- 第一阶段只允许更新**非活动 `user_code` 槽**。不得升级 bootloader、updater、分区表、DNN、ASR model、voice 或 user_file。
+- 只有在双 `user_code` 槽、试运行确认和自动回滚全部通过实机验收后，CI OTA 才允许进入生产。
+
+第一阶段限制不是功能降级，而是防变砖边界。当前 SDK 的 DNN、voice、user_file 等资源没有确认具备完整双副本和掉电原子切换能力；在这些能力验证前更新单副本资源，无法满足“任意阶段掉电仍可启动旧版本”的产品目标。
+
+### 12.2 不可变区域与升级产物
+
+- bootloader 和独立 updater 为不可变恢复根，不允许 ESP32 擦除或覆盖。
+- 当前活动 `user_code` 槽在整次升级完成并验证前不可写入。
+- 升级产物必须由当前官方 Windows SDK 按 `FW_V4` OTA 格式生成，不接受裸 Flash dump、未知工具生成包或任意地址写入指令。
+- OTA manifest 至少包含：目标芯片 `CI1306`、OTA 协议版本、固件版本、镜像长度、目标分区类型、SHA-256 和包格式版本。
+- CI 必须拒绝芯片型号不符、长度越界、目标不是非活动 `user_code`、分区范围重叠、版本格式非法或摘要不符的升级包。
+- Windows 正式打包前必须确认 `user_code1/user_code2` 均实际存在且容量足够；不得仅因配置文件出现双槽字段就认定 bootloader 已支持可靠回滚。
+
+### 12.3 进入 OTA 模式
+
+1. ESP32 完整下载并校验升级包，不允许边下载边覆盖 CI。
+2. ESP32 停止新的 HTTP upload/downlink，并等待当前 CI UART 关键命令结束。
+3. ESP32 发送 `ENTER_OTA_MODE(0x28)`，payload 为：
+
+```text
+offset  size  field
+0       1     ota_ver = 0x01
+1       4     image_size, little-endian
+5       32    sha256
+```
+
+4. CI 校验请求和本地升级条件。可进入时先返回原命令 `SEQ` 对应的 `ACK(status=0x00)`，然后执行以下单一状态转移：
+   - 停止本地 ding 和 ESP 下行播放；
+   - 停止 AEC/SSP 上行 codec 和 IIS RX/TX；
+   - 清空下行 PCM 队列；
+   - 停止普通 heartbeat 和音频控制命令处理；
+   - 进入 `STATE=0x08`；
+   - UART1 独占切换到 FW_V4 OTA parser。
+5. CI 不能进入时返回 `ACK(status=0x03)`，并保持原正常状态，不得部分擦除 Flash。
+6. ESP32 只有收到成功 ACK 后才能发送 OTA 数据；不能用固定延时替代 ACK。
+
+### 12.4 OTA 数据传输
+
+- OTA 数据阶段沿用启英泰伦 FW_V4 `A5 0F` 帧、CRC16、包序号和 ACK 语义，不把 1024-byte 固件块塞入正常协议 64-byte payload。
+- 实现时必须把供应商 OTA 帧格式固化到本协议或独立的已确认协议文档，禁止直接依赖未版本化的示例代码行为。
+- 每个数据包必须包含可验证的连续包序号；CI ACK 必须返回当前包和期望下一包，重复包只重复 ACK，不重复写入。
+- ESP32 对 ACK 超时只重发当前包，不跳包；重试超过上限后停止发送，等待 CI OTA 超时恢复。
+- CI 必须对写入地址和长度再次做分区边界检查，UART payload 不能直接决定任意 Flash 地址。
+- CI 收到数据期间只写非活动槽。传输中断、CRC 错误、看门狗复位或掉电不能改变活动槽。
+- OTA 模式连续 10 秒没有收到有效 OTA 帧时，CI 将非活动槽标记为无效并复位，继续启动旧固件。
+
+### 12.5 完成、试运行与回滚
+
+1. 收完全部数据后，CI 按 manifest 长度回读非活动槽并独立计算摘要；不能只信任 ESP32 的 SHA-256 或逐包 CRC16。
+2. 摘要、镜像结构和分区范围全部有效后，CI 才把新槽标记为“待试运行”。分区元数据必须最后写入，并具备 CRC 和掉电安全的原子更新方式。
+3. CI 向 ESP32 返回最终成功 ACK 后复位；复位前不得把旧槽标记为无效。
+4. boot/updater 优先启动“待试运行”槽，并启动确认超时。新固件只有完成最小自检、启动 UART1、与 ESP32 完成 PING/PONG，才能把自身标记为“已确认”。
+5. 新槽启动失败、看门狗复位、确认超时或镜像校验失败时，boot/updater 必须自动恢复旧槽并将失败槽标记为无效。
+6. CI 正常握手后发送 `FIRMWARE_INFO(0x18)`：
+
+```text
+offset  size  field
+0       1     format = 0x01
+1       6     SDK FW_V4 version bytes
+7       1     active_slot: 1 or 2
+8       1     boot_state: 0=confirmed, 1=trial, 2=rolled_back
+```
+
+7. ESP32 只有收到目标版本且 `boot_state=confirmed`，才能向云端报告 CI OTA 成功；收到 `rolled_back` 必须报告升级失败而不是成功。
+
+### 12.6 禁止事项
+
+- 禁止运行中覆盖当前活动 `user_code`。
+- 禁止升级过程中覆盖 bootloader 或 updater。
+- 禁止收到 `ENTER_OTA_MODE` 后立即擦除任何分区；必须先完成请求校验并成功 ACK。
+- 禁止 OTA 模块自行接管 UART1 中断向量。
+- 禁止将普通 UART peer timeout 当作 OTA 失败判据；进入 OTA 后由 OTA owner 独立维护 10 秒数据超时。
+- 禁止校验失败后切换活动槽。
+- 禁止仅凭“升级数据发送完成”向云端报告成功，必须等待新固件启动确认。
+
+### 12.7 后续实施检查清单
+
+- [ ] ESP32 实现 CI1306 独立 OTA target、完整下载和 SHA-256 预校验
+- [ ] 冻结启英泰伦 FW_V4 `A5 0F` OTA 帧的逐字节协议
+- [ ] CI UART 单一 owner 支持 normal/OTA parser 原子切换
+- [ ] Windows SDK 生成并验证双 `user_code` 槽布局
+- [ ] 验证 inactive-slot-only 写入和全部地址边界
+- [ ] 验证传输断线、重复包、乱序包、CRC 错误和 10 秒超时
+- [ ] 在擦除、写入、校验、元数据提交、首次启动各阶段执行断电测试
+- [ ] 验证新槽启动失败、看门狗复位和未确认时自动回滚
+- [ ] ESP32 仅在 `FIRMWARE_INFO` 报告目标版本已确认后上报 OTA 成功
+
+## 13. ESP32 本次必须配合的改动
+
+本节是本次 CI1306 全双工稳定性修复对应的 ESP32 必改项；完成这些改动前，不应把整机下行播放流程视为验收完成。
+
+1. 自然播放结束后，ESP32 必须继续输出 40-100 ms 全零静音 PCM，然后发送 `STOP_DOWNLINK`，不能只在本地切回静音而长期不通知 CI。
+2. ESP32 必须等待 `STOP_DOWNLINK` 的 ACK；等待期间继续提供 BCLK/LRCK、输出静音 DOUT，并持续读取 CI 上行。
+3. `STOP_DOWNLINK` 成功或超时都不得停止 I2S master，也不得停止读取 CI 上行；该命令只结束当前下行播放。
+4. 播放被插话、唤醒词、网络错误或 worker 异常打断时，同样发送 `STOP_DOWNLINK`。
+5. 收到成功 ACK 后期望 CI 返回 `STATE=0x02`；若状态连续不一致，只记录并恢复状态机，不关闭上行总线。
+6. `START_DOWNLINK` 仍须等待成功 ACK，再等待 `DOWNLINK_START_SETTLE_MS=30` 后发送真实 PCM。
+7. 非播放期间继续在 DOUT 输出全零 PCM，保持 BCLK/LRCK 连续，避免 CI I2S RX 输入悬空。

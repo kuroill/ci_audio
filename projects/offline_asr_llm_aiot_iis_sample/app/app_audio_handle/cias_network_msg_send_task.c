@@ -48,6 +48,21 @@ bool network_send_task_init(void)
  */
 BaseType_t send_msg_to_network_task(sdio_task_msg_t *send_msg, BaseType_t *xHigherPriorityTaskWoken)
 {
+#if !CIAS_AIOT_DEMO_ENABLE
+    /*
+     * The production UART/I2S protocol disables the legacy AIOT transport,
+     * so cias_online_func_init() does not create network_msg_queue.  Several
+     * SDK paths still emit legacy status notifications during startup.  They
+     * must be harmless when that transport is disabled.
+     */
+    (void)send_msg;
+    (void)xHigherPriorityTaskWoken;
+    return pdFAIL;
+#else
+    if(!network_msg_queue)
+    {
+        return pdFAIL;
+    }
     //if(0 != __get_IPSR())
     if(0 != check_curr_trap())
     {
@@ -58,6 +73,7 @@ BaseType_t send_msg_to_network_task(sdio_task_msg_t *send_msg, BaseType_t *xHigh
 
         return xQueueSend(network_msg_queue, send_msg, 100);
     }
+#endif
 }
 
 

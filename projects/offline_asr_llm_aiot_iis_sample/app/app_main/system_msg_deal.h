@@ -16,6 +16,7 @@
 #include "voice_module_uart_protocol.h"
 #include "i2c_protocol_module.h"
 #include "ci_nlp.h"
+#include "ai_uart_i2s_protocol.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -142,6 +143,7 @@ typedef enum
 	SYS_MSG_TYPE_TEXT,
     SYS_MSG_TYPE_SET_PALY_PARAMETER,//音量，语速，语调
     SYS_MSG_TYPE_FACTORY_TEST_PLAY,    //生产测试播放
+    SYS_MSG_TYPE_AI_UART,
 }sys_msg_type_t;
 
 
@@ -160,6 +162,7 @@ typedef struct
         #endif
         sys_msg_play_data_t play_data;
         sys_msg_net_data_t  net_data;
+        ai_uart_i2s_command_t ai_uart_data;
         sys_msg_i2c_data_t  i2c_data;
     }msg_data;
 }sys_msg_t;

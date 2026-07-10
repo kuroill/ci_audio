@@ -610,6 +610,13 @@ uint32_t deal_userdef_msg(sys_msg_t *msg)
         break;
     }
     #endif
+    #if AI_UART_CONTROL_EN
+    case SYS_MSG_TYPE_AI_UART:
+    {
+        ai_uart_i2s_handle_command(&msg->msg_data.ai_uart_data);
+        break;
+    }
+    #endif
     /* CI IIC 协议消息 */
     #if MSG_USE_I2C_EN
     case SYS_MSG_TYPE_I2C:
