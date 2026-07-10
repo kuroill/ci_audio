@@ -617,35 +617,33 @@ const cm_codec_hw_info_t hw_inner_codec_info =
  * @brief 语音前处理codec配置参数表
  *
  */
-cm_codec_hw_info_t audio_pre_tslt_out_info = 
+cm_codec_hw_info_t audio_pre_tslt_out_info =
 {
     .IICx = IIC_NULL,
     .output_iis.IISx = IIS0,
-    .output_iis.iis_mode_sel = IIS_MASTER,
+    .output_iis.iis_mode_sel = IIS_SLAVE,
     .output_iis.over_sample = IIS_MCLK_FS_256,
     #if !INNER_CODEC_AUDIO_IN_USE_RESAMPLE
     .output_iis.clk_source = AUDIO_PLAY_CLK_SOURCE_OSC_OR_INEER_RC,
     #else
     .output_iis.clk_source = AUDIO_PLAY_CLK_SOURCE_IPCORE,
     #endif
-    .output_iis.mclk_out_en = IIS_MCLK_OUT,
+    .output_iis.mclk_out_en = IIS_MCLK_MODENULL,
     .output_iis.iis_data_format = IIS_DF_IIS,
     .output_iis.sck_lrck_ratio = IIS_SCK_LRCK_64,
     .output_iis.tx_cha = IIS_TX_CHANNAL_TX0,
-    .output_iis.scklrck_out_en = IIS_SCKLRCK_OUT,
-    #if USE_AUDIO_UPLOAD_BY_IIS
+    .output_iis.scklrck_out_en = IIS_SCKLRCK_IN,
     .input_iis.IISx = IIS0,
     .input_iis.iis_mode_sel = IIS_SLAVE,
     .input_iis.over_sample = IIS_MCLK_FS_256,
     .input_iis.clk_source = AUDIO_PLAY_CLK_SOURCE_IPCORE,
-    .input_iis.mclk_out_en = IIS_MCLK_OUT,
+    .input_iis.mclk_out_en = IIS_MCLK_MODENULL,
     .input_iis.iis_data_format = IIS_DF_IIS,
     .input_iis.sck_lrck_ratio = IIS_SCK_LRCK_64,
     .input_iis.rx_cha = IIS_RX_CHANNAL_RX0,
     .input_iis.outside_mclk_fre = 0,
-    .input_iis.scklrck_out_en = IIS_SCKLRCK_OUT,
-    #endif
-}; 
+    .input_iis.scklrck_out_en = IIS_SCKLRCK_IN,
+};
 
 
     /**
@@ -687,6 +685,20 @@ void audio_pre_rslt_out_codec_init(void)
     cm_config_pcm_buffer(PLAY_PRE_AUDIO_CODEC_ID, CODEC_OUTPUT, &pcm_buffer_info);
     //配置IIS放音音频格式
     cm_config_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_OUTPUT, &pre_rslt_out_sound_info);
+
+    cm_pcm_buffer_info_t input_buffer_info;
+    input_buffer_info.record_buffer_info.block_num = 8;
+    input_buffer_info.record_buffer_info.block_size = AUDIO_CAP_POINT_NUM_PER_FRM * sizeof(int16_t);
+    input_buffer_info.record_buffer_info.buffer_size = input_buffer_info.record_buffer_info.block_size * input_buffer_info.record_buffer_info.block_num;
+    input_buffer_info.record_buffer_info.pcm_buffer = pvPortMalloc(input_buffer_info.record_buffer_info.buffer_size);
+    CI_ASSERT(input_buffer_info.record_buffer_info.pcm_buffer,"\n");
+    cm_config_pcm_buffer(PLAY_PRE_AUDIO_CODEC_ID, CODEC_INPUT, &input_buffer_info);
+
+    cm_sound_info_t downlink_in_sound_info = {0};
+    downlink_in_sound_info.sample_rate = 16000;
+    downlink_in_sound_info.channel_flag = 1;
+    downlink_in_sound_info.sample_depth = IIS_DW_16BIT;
+    cm_config_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_INPUT, &downlink_in_sound_info);
 }
 
 #if USE_AUDIO_UPLOAD_BY_IIS

@@ -420,10 +420,12 @@ static void task_init(void *p_arg)
     #if CLOUD_UART_PROTOCOL_EN
     alg_cloud_protocol_init();
     #endif
+    #if CIAS_AIOT_DEMO_ENABLE
     if(!cias_online_func_init())
     {
         CI_ASSERT(0, "cias_online_func_init error\r\n");
     }
+    #endif
     #if (MULT_INTENT > 1)
     if (nlp_module_init() != NLP_STATE_OK) //nlp模块初始化
     {

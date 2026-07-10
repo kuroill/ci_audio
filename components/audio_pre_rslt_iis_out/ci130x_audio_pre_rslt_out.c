@@ -11,6 +11,7 @@
 #include "queue.h"
 #include "semphr.h"
 #include "sdk_default_config.h"
+#include "ai_uart_i2s_protocol.h"
 #include "ci130x_uart.h"
 #include "ci130x_dma.h"
 #include "debug_time_consuming.h"
@@ -148,6 +149,14 @@ void audio_pre_rslt_upload_by_iis(int16_t *left, int16_t *right, ci_wrapfft_audi
     uint32_t write_pcm_addr = 0;
     uint32_t block_size = sg_init_tmp_str.init_str.block_size;
     int num = block_size / sizeof(int16_t) / 2;
+    (void)right;
+    (void)p_wrapfft_audio;
+#if AI_I2S_RUNTIME_UPLINK_EN
+    if(!ai_uart_i2s_peer_ready())
+    {
+        return;
+    }
+#endif
 #if IIS_UPLOAD_IS_WAKEUP
     if ((gCiasAiotRunParam.is_wake_up_flag || gCiasAiotRunParam.is_always_iis_flag))  
 #endif 
@@ -161,29 +170,8 @@ void audio_pre_rslt_upload_by_iis(int16_t *left, int16_t *right, ci_wrapfft_audi
         int16_t *pcm_data_p = (int16_t *)write_pcm_addr;
         for (int i = 0; i < num; i++)
         {
-#if USE_DENOISE_NN_RTC
-            if (is_convert_left_right)
-            {
-                pcm_data_p[2 * i] = right[i];
-                pcm_data_p[2 * i + 1] = left[i];
-            }
-            else
-#endif
-            {    
-                if (gCiasAiotFuncParam.upload_audio_by_denoise) // 上传降噪音频
-                {
-                    if(ciss_get(CI_SS_AEC_WORK_STATE))  //AEC处理状态上传AEC处理后，降噪前的数据
-                    {
-                        pcm_data_p[2 * i] = p_wrapfft_audio->asr_src_data[i];
-                        pcm_data_p[2 * i + 1] = p_wrapfft_audio->asr_src_data[i];
-                    }
-                    else
-                    {
-                        pcm_data_p[2 * i] = right[i];   
-                        pcm_data_p[2 * i + 1] = right[i];   //非AEC处理状态上传降噪后的音频
-                    }
-                }
-            }
+            pcm_data_p[2 * i] = left[i];
+            pcm_data_p[2 * i + 1] = left[i];
         }
         cm_write_codec(PLAY_PRE_AUDIO_CODEC_ID, (void *)write_pcm_addr, 0);
     }
@@ -420,9 +408,6 @@ void audio_pre_rslt_write_data(int16_t *left, int16_t *right, uint32_t wrapfft_a
  */
 void audio_pre_rslt_stop(void)
 {
-#if USE_IIS1_OUT_PRE_RSLT_AUDIO || USE_HP_OUT_PRE_RSLT_AUDIO
-#else
-
 #if USE_IIS1_OUT_PRE_RSLT_AUDIO
     cm_stop_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_OUTPUT);
 #endif
@@ -430,8 +415,7 @@ void audio_pre_rslt_stop(void)
 #if USE_HP_OUT_PRE_RSLT_AUDIO
     cm_stop_codec(PLAY_CODEC_ID, CODEC_OUTPUT);
 #endif
-#endif
-
+    sg_init_tmp_str.send_data_cnt = 0;
 }
 
 /**
@@ -440,18 +424,7 @@ void audio_pre_rslt_stop(void)
  */
 void audio_pre_rslt_start(void)
 {
-#if USE_IIS1_OUT_PRE_RSLT_AUDIO || USE_HP_OUT_PRE_RSLT_AUDIO
-
-#else
-
-#if USE_IIS1_OUT_PRE_RSLT_AUDIO
-    cm_start_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_OUTPUT);
-#endif
-#if USE_HP_OUT_PRE_RSLT_AUDIO
-    cm_start_codec(PLAY_CODEC_ID, CODEC_OUTPUT);
-#endif
-#endif
-
+    sg_init_tmp_str.send_data_cnt = 0;
 }
 
 /********** (C) COPYRIGHT Chipintelli Technology Co., Ltd. *****END OF FILE****/

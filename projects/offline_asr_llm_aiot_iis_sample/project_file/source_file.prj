@@ -139,6 +139,7 @@ source-file: projects/offline_asr_llm_aiot_iis_sample/app/app_main/system_hook.c
 source-file: projects/offline_asr_llm_aiot_iis_sample/app/app_main/system_msg_deal.c
 source-file: projects/offline_asr_llm_aiot_iis_sample/app/app_main/ci_ssp_config.c
 source-file: projects/offline_asr_llm_aiot_iis_sample/app/app_main/user_msg_deal.c
+source-file: projects/offline_asr_llm_aiot_iis_sample/app/app_main/ai_uart_i2s_protocol.c
 source-file: projects/offline_asr_llm_aiot_iis_sample/app/app_doa/doa_app_handle.c
 source-file: projects/offline_asr_llm_aiot_iis_sample/app/app_cwsl/cwsl_app_handle.c
 source-file: projects/offline_asr_llm_aiot_iis_sample/app/app_sed/sed_app_host.c

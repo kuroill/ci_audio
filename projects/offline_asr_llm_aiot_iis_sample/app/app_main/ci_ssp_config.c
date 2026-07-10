@@ -36,8 +36,8 @@ const iis_out_audio_config_t iis_out_audio_config =
 #else
     .uart_out_enable = 0,			 //用于uart采音。
 #endif
-	.iis_left_channel = MICL,		 //左通道输出音频。MICL、MICR、REFL、REFR、DST1、DST2
-	.iis_right_channel = DST1,		 //右通道输出音频。MICL、MICR、REFL、REFR、DST1、DST2
+	.iis_left_channel = DST1,		 //AEC/SSP 后 PCM，左右 physical slot 相同
+	.iis_right_channel = DST1,
 	.vad_mark_enable = false,		 //是否附带vad标签，默认左通道输出vad标签。
 	.ssp_dst_cover_micl_enble = false //处理过后的音频dst覆盖原始micl数据,16k采样数据
 };

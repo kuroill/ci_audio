@@ -16,6 +16,7 @@
 #include "cias_demo_config.h"
 #include "cias_voice_upload.h"
 #include "cias_aiot_protocol.h"
+#include "ai_uart_i2s_protocol.h"
 // #include "all_cmd_statement.h"
 
 ///tag-insert-code-pos-1
@@ -399,6 +400,10 @@ void userapp_initial(void)
     #elif (UART_PROTOCOL_VER == 255)
     UARTInterruptConfig((UART_TypeDef *)UART_PROTOCOL_NUMBER, UART_PROTOCOL_BAUDRATE);
     #endif
+    #endif
+
+    #if AI_UART_CONTROL_EN
+    ai_uart_i2s_protocol_init();
     #endif
 
     #if MSG_USE_I2C_EN

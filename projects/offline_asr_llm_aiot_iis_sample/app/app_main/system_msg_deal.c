@@ -42,6 +42,7 @@
 #include "cwsl_manage.h"
 #include "cias_voice_upload.h"
 #include "cias_aiot_protocol.h"
+#include "ai_uart_i2s_protocol.h"
 #if USE_IR_ENABEL
 #include "main_device.h"
 #include "middle_device.h"
@@ -231,6 +232,12 @@ void  resume_asr()
  */
 void default_play_done_callback(cmd_handle_t cmd_handle)
 {
+}
+
+static void repeat_wakeup_ding_done_callback(cmd_handle_t cmd_handle)
+{
+    default_play_done_callback(cmd_handle);
+    ai_uart_i2s_on_ding_done();
 }
 
 
@@ -486,6 +493,7 @@ void play_enter_wakeup_done_cb(cmd_handle_t cmd_handle)
     send_msg.msg_type = SYS_MSG_TYPE_CMD_INFO;
     send_msg.msg_data.cmd_info_data.cmd_info_status = MSG_CMD_INFO_STATUS_POST_CHANGE_ASR_NORMAL_WORD;
     send_msg_to_sys_task(&send_msg, NULL);
+    ai_uart_i2s_on_ding_done();
 }
 
 
@@ -575,6 +583,8 @@ void enter_wakeup_deal(uint32_t exit_wakup_ms, cmd_handle_t cmd_handle )
 {
     xSemaphoreTake(WakeupMutex, portMAX_DELAY);
 
+    ai_uart_i2s_on_wake(cmd_info_get_command_id(cmd_handle));
+
     /*if last state is unwakeup, need change asr word*/
     if(SYS_STATE_UNWAKEUP == get_wakeup_state())
     {
@@ -612,7 +622,7 @@ void enter_wakeup_deal(uint32_t exit_wakup_ms, cmd_handle_t cmd_handle )
             else
             {
                 #if PLAY_ENTER_WAKEUP_EN
-                prompt_play_by_voice_id(WAKEUP_DING_VOICE_ID, default_play_done_callback, true);
+                prompt_play_by_voice_id(WAKEUP_DING_VOICE_ID, repeat_wakeup_ding_done_callback, true);
                 #else
                 default_play_done_callback(cmd_handle);
                 #endif

@@ -53,18 +53,24 @@ chipintelli提供的部分开发板和模组，可以通过下面的宏选择，
 #define MIC_DIFF_SINGLE                0   /*1,单端。0，差分（通用模块都是差分模式，省成本的模块为单端(MICN_L 接GND)时，需要配置为SINGLE）)*/
 
 //**IIS采音功能开关配置
-#define USE_IIS1_OUT_PRE_RSLT_AUDIO    0   //1,开启IIS采音功能,可以使用采音板采音,占用PA2~PA6。会多消耗20KB SYS内存 0,关闭IIS采音功能,PA2~PA6可以用于其它功能。
-#define USE_HP_OUT_PRE_RSLT_AUDIO      1
+#define USE_IIS1_OUT_PRE_RSLT_AUDIO    1   //生产 I2S：PA2~PA5，全双工 slave
+#define USE_HP_OUT_PRE_RSLT_AUDIO      0
 
 //**通讯串口配置
 #define CONFIG_CI_LOG_UART             HAL_UART0_BASE  //配置log输出使用的串口，请勿与protocol共用同一个串口
+
+#define AI_UART_CONTROL_EN             1
+#define AI_UART_CONTROL_UART           HAL_UART1_BASE
+#define AI_UART_CONTROL_BAUDRATE       UART_BaudRate921600
+#define AI_UART_TASK_POLL_MS           50
+#define AI_I2S_RUNTIME_UPLINK_EN       1
 
 #define MSG_COM_USE_UART_EN            0   //0,关闭语音模块通讯协议。1,开启语音模块通讯协议。
 #define UART_PROTOCOL_NUMBER           (HAL_UART2_BASE)    //语音模块协议使用的串口，请勿与log共用同一个串口。
 #define UART_PROTOCOL_BAUDRATE         (UART_BaudRate921600) //语音模块协议使用的串口波特率。
 #define UART_PROTOCOL_VER              2   //语音模块协议版本号:1,一代协议。2,二代协议，255,平台生成协议
 
-#define IIS_UPLOAD_IS_WAKEUP           1  //1:唤醒后开始录音 0：上电后开始录音不结束
+#define IIS_UPLOAD_IS_WAKEUP           0  //握手后持续输出，唤醒前由 ESP 读取并丢弃
 
 #define CLOUD_UART_PROTOCOL_EN         0   //云端协议使能-只有在启英开发者平台做固件配协议能用
 #if CLOUD_UART_PROTOCOL_EN
