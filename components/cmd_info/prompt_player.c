@@ -69,6 +69,29 @@ static prompt_player_t prompt_player =
     #endif
 };
 
+bool prompt_voice_id_is_allowed(uint16_t voice_id)
+{
+    return voice_id == WAKEUP_DING_VOICE_ID;
+}
+
+static uint32_t reject_disallowed_prompt(
+    cmd_handle_t cmd_handle,
+    int select_index,
+    play_done_callback_t play_done_callback)
+{
+    uint32_t request_id = (uint32_t)cmd_handle;
+    ci_logerr(LOG_CMD_INFO,
+              "local prompt rejected: request=%u select_index=%d allowed_voice_id=%u\n",
+              request_id,
+              select_index,
+              WAKEUP_DING_VOICE_ID);
+    if (play_done_callback)
+    {
+        play_done_callback((select_index == -2) ? NULL : cmd_handle);
+    }
+    return 1;
+}
+
 
 /**
  * @brief Get the mute voice in state object, DENOISE will used this function
@@ -371,6 +394,11 @@ uint32_t prompt_play_by_cmd_handle(
     play_done_callback_t play_done_callback,
     bool preemptive)
 {
+    if ((select_index != -2) ||
+        !prompt_voice_id_is_allowed((uint16_t)cmd_handle))
+    {
+        return reject_disallowed_prompt(cmd_handle, select_index, play_done_callback);
+    }
 #if !AUDIO_PLAYER_ENABLE && !NET_AUDIO_PLAY_BY_OPUS
     if (play_done_callback)
     {
@@ -532,6 +560,11 @@ uint32_t prompt_play_by_cmd_handle_v1(
     play_done_callback_t play_done_callback,
     bool preemptive)
 {
+    if ((select_index != -2) ||
+        !prompt_voice_id_is_allowed((uint16_t)cmd_handle))
+    {
+        return reject_disallowed_prompt(cmd_handle, select_index, play_done_callback);
+    }
 #if !AUDIO_PLAYER_ENABLE && !NET_AUDIO_PLAY_BY_OPUS
     if (play_done_callback)
     {
@@ -635,126 +668,18 @@ uint32_t prompt_play_by_cmd_string(
 }
 
 
-typedef struct multi_id_info_st
-{
-    uint32_t id;
-    uint16_t select_index;
-}multi_id_info_t;
-
-
 uint32_t prompt_play_by_multi_cmd_id(prompt_play_info_t *p_play_info, int number, play_done_callback_t play_done_callback)
 {
-    uint32_t ret = 1;
-    if (prompt_player.semaphore == NULL)
+    (void)p_play_info;
+    (void)number;
+    ci_logerr(LOG_CMD_INFO,
+              "prompt combination rejected: only voice_id=%u is allowed\n",
+              WAKEUP_DING_VOICE_ID);
+    if (play_done_callback)
     {
-        prompt_player.semaphore = xSemaphoreCreateMutex();
+        play_done_callback(0);
     }
-    if (prompt_player.semaphore)
-    {
-        xSemaphoreTake(prompt_player.semaphore, portMAX_DELAY);
-    }
-    if (!prompt_player.play_queue)
-    {
-        prompt_player.play_queue = xQueueCreate(5, sizeof(voice_play_info_t));
-    }
-
-    if ((!prompt_player.play_queue) || (!prompt_player.enabled_flag) || (number > MAX_COMBINATION_COUNT))
-    {
-        if (play_done_callback)
-        {
-            play_done_callback(0);
-        }
-        if (prompt_player.semaphore)
-        {
-            xSemaphoreGive(prompt_player.semaphore);
-        }
-        return ret;
-    }
-
-    voice_play_info_t voice_play_info;
-    if (prompt_player.combination_number > 0)     //当前是否正在播报,需要打断
-    {
-#if SIMPLE_AUDIO_PLAYER_ENABLE
-        sap_stop();
-#else
-        if (RETURN_ERR == pause_play(NULL,NULL))
-        {
-            vTaskDelay(1);
-            pause_play(NULL,NULL);
-        }
-#endif
-        if (prompt_player.semaphore)
-        {
-            xSemaphoreGive(prompt_player.semaphore);
-        }
-
-        int timeout = 2000;        //2秒
-        while(prompt_player.combination_number > 0 && timeout > 0)
-        {
-            timeout--;
-            vTaskDelay(1);
-        }
-        if (prompt_player.semaphore)
-        {
-            xSemaphoreTake(prompt_player.semaphore, portMAX_DELAY);
-        }
-    }
-    voice_play_info.cmd_handle = 0;
-    voice_play_info.select_index = 0;
-    voice_play_info.play_done_callback = play_done_callback;    
-    voice_play_info.play_done_callback = play_done_callback;    
-    ret = voice_play_info_add_to_queue(&voice_play_info);
-    prompt_player.combination_number = 0;
-    for (int i = 0;i < number;i++)
-    {
-    	cmd_handle_t cmd_handle = cmd_info_find_command_by_id(p_play_info[i].cmd_id);
-        uint8_t select_index = p_play_info[i].select_index;
-        uint16_t voice_id_buffer[MAX_COMBINATION_COUNT];
-        uint16_t start_index = ((command_info_t*)cmd_handle)->voice_start_index;
-        uint16_t end_index = ((command_info_t*)cmd_handle)->voice_end_index;
-        uint8_t combination_number = cmd_info_get_voice_index(start_index, end_index, select_index, voice_id_buffer, MAX_COMBINATION_COUNT);
-        if (prompt_player.combination_number + combination_number <= MAX_COMBINATION_COUNT)
-        {
-            get_voice_addr_by_id(voice_id_buffer, &prompt_player.combination_list[prompt_player.combination_number], combination_number);
-            prompt_player.combination_number += combination_number;
-        }
-    }
-    prompt_player.combination_index = 0;
-
-    /*audio PA on*/
-    // #if (PLAYER_CONTROL_PA)
-    // //audio_play_hw_start(ENABLE);
-    // audio_play_hw_pa_da_ctl(ENABLE,true);
-    // vTaskDelay(pdMS_TO_TICKS(100));
-    // #endif
-    #if ONE_SHOT_ENABLE
-    uint32_t rst = cmd_info_is_wakeup_word(voice_play_info.cmd_handle);
-    pause_asr(!rst, !rst);
-    #elif USE_AEC_MODULE
-    if(CI_SS_CWSL_AEC_MUTE_ON == ciss_get(CI_SS_CWSL_AEC_MUTE_STATE))
-    {
-        pause_asr(1, 1);
-    }
-    else
-    {
-        pause_asr(0, 0);
-    }
-    #else
-    pause_asr(1, 1);
-    #endif
-	#if SIMPLE_AUDIO_PLAYER_ENABLE
-	sap_play(prompt_player.combination_list[prompt_player.combination_index++], combination_callback);
-	#else
-    pause_audio_play_prompt(prompt_player.combination_list[prompt_player.combination_index++], 1, combination_callback);
-	#endif
-
-
-    if (prompt_player.semaphore)
-    {
-        xSemaphoreGive(prompt_player.semaphore);
-    }
-    ret = 0;
-    return ret;
+    return 1;
 }
 
 

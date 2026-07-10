@@ -23,6 +23,9 @@
 
 //!Maximum combined prompts number.
 #define MAX_COMBINATION_COUNT           16  
+#define WAKEUP_DING_VOICE_ID            1000U
+
+bool prompt_voice_id_is_allowed(uint16_t voice_id);
 
 /**
  * @brief Define the type of callback function that needed by play interfaces.

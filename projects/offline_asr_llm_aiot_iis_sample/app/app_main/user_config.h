@@ -168,22 +168,16 @@ chipintelli提供的部分开发板和模组，可以通过下面的宏选择，
 #define DEFAULT_MODEL_GROUP_ID          0
 #endif
 
-#define PLAY_WELCOME_EN                 1      //是否在启动时播放开机提示音。1:是 0:否。
+#define PLAY_WELCOME_EN                 0      //是否在启动时播放开机提示音。1:是 0:否。
 #define PLAY_ENTER_WAKEUP_EN            1      //是否在唤醒时播放提示音。1:是 0:否。
-#define PLAY_EXIT_WAKEUP_EN             1      //是否在切换到只监听唤词状态时播放提示音。1:是 0:否。
-#define PLAY_OTHER_CMD_EN               1      //是否在识别到命令词时播放提示音。1:是 0:否。
+#define PLAY_EXIT_WAKEUP_EN             0      //是否在切换到只监听唤词状态时播放提示音。1:是 0:否。
+#define PLAY_OTHER_CMD_EN               0      //是否在识别到命令词时播放提示音。1:是 0:否。
 #define ADAPTIVE_THRESHOLD              0
 #define ASR_SKIP_FRAME_CONFIG           0
 #define EXIT_WAKEUP_TIME                30*1000   //退出唤醒超时时间,单位毫秒。超过此配置指定的时间长度内没有识别到任何命令词，就会切换到只监听唤词状态。
     
 //**播放器配置  
-#if  USE_HP_OUT_NET_AUDIO
-#define AUDIO_PLAYER_ENABLE             0   //是否启用音频播放器。0:不启用,1:启用。不时用播放功能时，启用本地mp3播放器多占用52KB内存
-#else
 #define AUDIO_PLAYER_ENABLE             1   //是否启用音频播放器。0:不启用,1:启用。不时用播放功能时，启用本地mp3播放器多占用52KB内存
-#endif
-#define AUDIO_PLAYER_ENABLE             0   //是否启用音频播放器。0:不启用,1:启用。不时用播放功能时，启用本地mp3播放器多占用52KB内存
-                                            //关闭此功能可以节省内存空间。
 #define PLAYER_CONTROL_PA               0   //是否有播放器控音频功放开关。0:功放常开,1:播放器在需要播放时才打开,但可能增加一点每一次播放的延迟时间
 #define VOLUME_MAX                      7   //设置音量调节的上限值，对应硬件支持的最大音量。
 #define VOLUME_MIN                      1   //设置音量调节的下限值，对应最小音量。
@@ -235,7 +229,7 @@ chipintelli提供的部分开发板和模组，可以通过下面的宏选择，
 #define VPT_SIZE                        (192*sizeof(float))             //模板大小-不可修改
 #define NVDATA_ID_VP_NUMBER             NVDATA_ID_VP_MOULD_INFO         //存储已添加了的模板数量-不可修改
 #define VP_SLIDE_TIME_PER_CMPT          1                               //声纹每次计算，滑窗的次数-不可修改
-#define WMAN_PLAY_EN                    1                               //男女声纹识别播报
+#define WMAN_PLAY_EN                    0                               //男女声纹识别播报
 #endif
 #if     USE_VPR
 #define VP_USE_FRM_LEN                  1200      //声纹计算的窗长，单位为ms, 建议范围1200-1500，值越大消耗内存越多（每增加100，内存增加8KB）
