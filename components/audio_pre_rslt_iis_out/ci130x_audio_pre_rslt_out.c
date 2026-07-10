@@ -74,6 +74,7 @@ void audio_pre_rslt_out_play_card_init(void)
     audio_pre_rslt_out_codec_init();
     ref_in_codec_registe();
     cm_start_codec(REF_RECORD_CODEC_ID, CODEC_INPUT);
+    ai_uart_i2s_on_audio_ready();
 #else
 #if USE_IIS1_OUT_PRE_RSLT_AUDIO
     audio_pre_rslt_out_codec_init();

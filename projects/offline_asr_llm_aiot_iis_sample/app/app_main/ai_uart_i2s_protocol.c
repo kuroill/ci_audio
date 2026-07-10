@@ -23,6 +23,7 @@
 #define AI_UART_RX_MAX_PAYLOAD 64
 #define AI_UART_HEARTBEAT_MS 1000
 #define AI_UART_PEER_TIMEOUT_MS 3000
+#define AI_PLAY_STOP_WAIT_MS 250
 
 #define AI_UART_MSG_ACK 0x03
 #define AI_UART_MSG_PING 0x05
@@ -48,10 +49,22 @@ static volatile uint8_t peer_ready;
 static volatile uint8_t current_state = AI_UART_STATE_WAKEUP_WAIT;
 static volatile uint8_t downlink_enabled;
 static volatile uint8_t downlink_codec_started;
+static volatile uint8_t i2s_rx_ready;
 static volatile TickType_t last_peer_tick;
 static uint8_t tx_seq;
 static uint32_t downlink_bytes;
 static volatile uint32_t dropped_commands;
+
+static uint8_t wait_audio_play_idle(uint32_t wait_ms)
+{
+    uint32_t waited_ms = 0;
+    while((AUDIO_PLAY_STATE_IDLE != get_audio_play_state()) && (waited_ms < wait_ms))
+    {
+        vTaskDelay(pdMS_TO_TICKS(5));
+        waited_ms += 5;
+    }
+    return (AUDIO_PLAY_STATE_IDLE == get_audio_play_state()) ? 1 : 0;
+}
 
 static uint8_t crc8(const uint8_t *data, uint16_t len)
 {
@@ -125,48 +138,92 @@ static void stop_downlink(void)
     downlink_enabled = 0;
     if(downlink_codec_started)
     {
-        cm_stop_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_INPUT);
-        cm_stop_codec(PLAY_CODEC_ID, CODEC_OUTPUT);
+        cm_set_codec_mute(PLAY_CODEC_ID, CODEC_OUTPUT, 3, ENABLE);
+        audio_play_hw_pa_da_ctl(DISABLE, true);
         downlink_codec_started = 0;
     }
-    mprintf("[DOWNLINK] stopped bytes=%u\n", (unsigned int)downlink_bytes);
+    mprintf("[DOWNLINK] stopped bytes=%u rx=drain pa=off\n", (unsigned int)downlink_bytes);
 }
 
 static void downlink_task(void *arg)
 {
+    static int16_t mono_pcm[AUDIO_CAP_POINT_NUM_PER_FRM];
     (void)arg;
     for(;;)
     {
         uint32_t input_addr = 0;
         uint32_t input_size = 0;
-        if(!downlink_enabled)
+        if(!i2s_rx_ready)
         {
-            vTaskDelay(pdMS_TO_TICKS(10));
+            vTaskDelay(pdMS_TO_TICKS(5));
             continue;
         }
         cm_read_codec(PLAY_PRE_AUDIO_CODEC_ID, &input_addr, &input_size);
-        if(downlink_enabled && input_addr && input_size &&
-           AUDIO_PLAY_OS_SUCCESS == audio_play_hw_write_data((void *)input_addr, input_size))
+        if(downlink_enabled && input_addr && input_size)
         {
-            downlink_bytes += input_size;
+            const int16_t *input_pcm = (const int16_t *)input_addr;
+            uint32_t sample_count = input_size / (2U * sizeof(int16_t));
+            if(sample_count > AUDIO_CAP_POINT_NUM_PER_FRM)
+            {
+                sample_count = AUDIO_CAP_POINT_NUM_PER_FRM;
+            }
+            for(uint32_t i = 0; i < sample_count; i++)
+            {
+                mono_pcm[i] = input_pcm[2 * i];
+            }
+            if(AUDIO_PLAY_OS_SUCCESS == audio_play_hw_write_data(mono_pcm, sample_count * sizeof(int16_t)))
+            {
+                downlink_bytes += sample_count * sizeof(int16_t);
+            }
         }
     }
 }
 
 static uint8_t start_downlink(void)
 {
+    static uint8_t downlink_play_buffer[AUDIO_CAP_POINT_NUM_PER_FRM * sizeof(int16_t) * 4];
+    cm_pcm_buffer_info_t pcm_buffer_info = {0};
+    cm_sound_info_t sound_info = {0};
+
     if(downlink_enabled)
     {
         return 1;
     }
-    stop_play(NULL, NULL);
+    if(!i2s_rx_ready)
+    {
+        mprintf("[DOWNLINK] start failed: i2s rx not ready\n");
+        return 0;
+    }
+    if(AUDIO_PLAY_STATE_IDLE != get_audio_play_state())
+    {
+        stop_play(NULL, NULL);
+        if(!wait_audio_play_idle(AI_PLAY_STOP_WAIT_MS))
+        {
+            mprintf("[DOWNLINK] start failed: player busy\n");
+            return 0;
+        }
+    }
+
+    pcm_buffer_info.play_buffer_info.block_num = 1;
+    pcm_buffer_info.play_buffer_info.buffer_num = 4;
+    pcm_buffer_info.play_buffer_info.block_size = AUDIO_CAP_POINT_NUM_PER_FRM * sizeof(int16_t);
+    pcm_buffer_info.play_buffer_info.buffer_size = pcm_buffer_info.play_buffer_info.block_size;
+    pcm_buffer_info.play_buffer_info.pcm_buffer = downlink_play_buffer;
+    cm_config_pcm_buffer(PLAY_CODEC_ID, CODEC_OUTPUT, &pcm_buffer_info);
+
+    sound_info.sample_rate = 16000;
+    sound_info.channel_flag = 1;
+    sound_info.sample_depth = IIS_DW_16BIT;
+    cm_config_codec(PLAY_CODEC_ID, CODEC_OUTPUT, &sound_info);
+
     downlink_bytes = 0;
     downlink_codec_started = 1;
-    cm_start_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_INPUT);
     cm_start_codec(PLAY_CODEC_ID, CODEC_OUTPUT);
+    cm_set_codec_mute(PLAY_CODEC_ID, CODEC_OUTPUT, 3, DISABLE);
+    audio_play_hw_pa_da_ctl(ENABLE, true);
     downlink_enabled = 1;
     send_state(AI_UART_STATE_DOWNLINK_PLAYING);
-    mprintf("[DOWNLINK] started owner=ai_uart\n");
+    mprintf("[DOWNLINK] started owner=ai_uart format=16000/16/mono pa=on\n");
     return 1;
 }
 
@@ -300,6 +357,11 @@ int ai_uart_i2s_peer_ready(void)
     return peer_ready ? 1 : 0;
 }
 
+void ai_uart_i2s_on_audio_ready(void)
+{
+    i2s_rx_ready = 1;
+}
+
 static void heartbeat_task(void *arg)
 {
     TickType_t last_ping = 0;
@@ -350,8 +412,15 @@ void ai_uart_i2s_on_wake(uint16_t wake_id)
     uint8_t payload[2] = {(uint8_t)(wake_id & 0xff), (uint8_t)(wake_id >> 8)};
     if(downlink_enabled || AUDIO_PLAY_STATE_IDLE != get_audio_play_state())
     {
-        stop_play(NULL, NULL);
         stop_downlink();
+        if(AUDIO_PLAY_STATE_IDLE != get_audio_play_state())
+        {
+            stop_play(NULL, NULL);
+            if(!wait_audio_play_idle(AI_PLAY_STOP_WAIT_MS))
+            {
+                mprintf("[AI_UART] wake preempt wait timeout\n");
+            }
+        }
     }
     send_frame(AI_UART_MSG_WAKE_DETECTED, payload, sizeof(payload));
     send_state(AI_UART_STATE_LISTENING);

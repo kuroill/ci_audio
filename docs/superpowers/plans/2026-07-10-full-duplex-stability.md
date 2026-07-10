@@ -48,7 +48,7 @@
 - [ ] Remove the private command queue and blocking protocol task; retain a heartbeat task for periodic PING and peer timeout.
 - [ ] Run `bash tests/test_uart_i2s_protocol.sh` and verify it passes.
 
-### Task 3: Harden independent downlink lifecycle
+### Task 3: Restore the proven downlink playback lifecycle
 
 **Files:**
 - Modify: `projects/offline_asr_llm_aiot_iis_sample/app/app_main/ai_uart_i2s_protocol.c`
@@ -57,12 +57,30 @@
 
 **Interfaces:**
 - Consumes: `start_downlink()` and `stop_downlink()` in task context.
-- Produces: RX-only start/stop while TX uplink remains untouched.
+- Produces: persistent IIS0 RX draining, mono RX-to-DAC forwarding, and local playback-only START/STOP transitions while TX uplink remains untouched.
 
-- [ ] Add failing checks that STOP_DOWNLINK stops `CODEC_INPUT` but never calls `audio_pre_rslt_stop()`.
-- [ ] Zero-initialize input PCM and sound descriptors before codec-manager calls.
-- [ ] Make downlink start idempotent and downlink stop release only I2S RX/local playback.
+- [ ] Add failing checks that `stop_downlink()` does not stop `CODEC_INPUT` or call `audio_pre_rslt_stop()`, and that the idle worker continues calling `cm_read_codec()`.
+- [ ] Add failing checks that START configures `PLAY_CODEC_ID` as `16000 Hz / 16-bit / mono`, unmutes the DAC, and enables PA.
+- [ ] Keep IIS0 RX initialized and started once; discard frames while disabled and forward one sample from each stereo-slot pair while enabled.
+- [ ] On every START, stop/wait for any old player, drain stale RX frames, reapply the internal DAC buffer/format, start/unmute output, enable PA, then report success.
+- [ ] On STOP, disable forwarding first, mute DAC, disable PA, and leave IIS0 RX/TX running.
 - [ ] Run the protocol regression test and verify it passes.
+
+### Task 3A: Harden wake-ding interruption
+
+**Files:**
+- Modify: `projects/offline_asr_llm_aiot_iis_sample/app/app_main/ai_uart_i2s_protocol.c`
+- Modify: `projects/offline_asr_llm_aiot_iis_sample/app/app_main/system_msg_deal.c`
+- Modify: `tests/test_wakeup_ding_only.sh`
+
+**Interfaces:**
+- Consumes: SDK playback completion callbacks and `get_audio_play_state()`.
+- Produces: `DING_DONE` only after real completion and a reusable local playback path after interruption.
+
+- [ ] Add failing checks for bounded wait-to-idle and completion-only `DING_DONE`.
+- [ ] Track whether ding playback is active; clear it when interrupted and emit completion only from the callback.
+- [ ] Wait up to 250 ms in task context after `stop_play()` before taking the DAC for ding or downlink.
+- [ ] Run the wakeup regression test and verify it passes.
 
 ### Task 4: Update the production protocol
 
