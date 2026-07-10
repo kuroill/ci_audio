@@ -10,8 +10,8 @@ Keep CI-to-ESP I2S uplink continuous while ESP-to-CI downlink audio is playing, 
 - The UART ISR reads bytes, validates bounded frames, and posts complete commands to a fixed FreeRTOS queue.
 - A protocol task owns ACK, STATE, heartbeat, peer timeout, and downlink state transitions.
 - I2S0 TX is the continuous AEC/SSP uplink. START_DOWNLINK and STOP_DOWNLINK must never stop it.
-- I2S0 RX is the on-demand downlink. A single persistent worker drains RX only while downlink is enabled.
-- Downlink start and stop only control I2S RX, local playback, mute, and PA state.
+- I2S0 RX is initialized once and remains running while ESP supplies BCLK/LRCK. A single persistent worker always drains RX; it forwards frames only while downlink is enabled and discards idle frames otherwise.
+- Downlink start and stop control only local playback ownership, PCM forwarding, mute, and PA state. They do not stop or reconfigure I2S0 TX/RX.
 
 ## Safety constraints
 
@@ -25,10 +25,18 @@ Keep CI-to-ESP I2S uplink continuous while ESP-to-CI downlink audio is playing, 
 ## Downlink lifecycle
 
 1. ESP sends START_DOWNLINK while continuing silent I2S DOUT.
-2. CI protocol task starts RX and playback, then returns ACK OK and STATE 0x04.
+2. CI protocol task drains stale RX data, configures the internal DAC as 16 kHz/16-bit/mono, unmutes it, enables PA, then returns ACK OK and STATE 0x04.
 3. ESP waits for ACK plus the configured settle interval and sends real PCM.
 4. ESP sends trailing silence and then STOP_DOWNLINK at natural completion or interruption.
-5. CI stops only RX/playback, returns ACK OK and STATE 0x02. Uplink TX continues throughout.
+5. CI disables PCM forwarding, mutes the DAC, disables PA, continues draining RX, then returns ACK OK and STATE 0x02. Uplink TX and I2S clocks continue throughout.
+
+## Audio format and playback recovery
+
+- The wire format in both directions is standard I2S, 16 kHz, signed 16-bit PCM, two physical slots per frame.
+- CI uplink duplicates processed mono `DST1` into left and right slots.
+- ESP downlink duplicates mono playback into left and right slots. CI consumes one selected slot and writes mono PCM to the internal DAC.
+- Every START_DOWNLINK reapplies the DAC PCM-buffer and sound-format configuration, because wake-word playback or `stop_play()` may have reconfigured the shared local playback path.
+- Wake-word interruption waits for the previous local player to become idle before the ding or a later downlink takes ownership. `DING_DONE` is emitted only from the actual playback-completion callback.
 
 ## Verification
 
@@ -39,7 +47,8 @@ Keep CI-to-ESP I2S uplink continuous while ESP-to-CI downlink audio is playing, 
 
 ## ESP32 coordination
 
-- Send STOP_DOWNLINK after natural playback completion, after a short trailing-silence drain.
+- Send stereo-slot frames with the same mono sample in both slots.
+- Send STOP_DOWNLINK after natural playback completion, after 40-100 ms of trailing silence.
 - Continue BCLK/LRCK and silent DOUT outside playback.
 - Continue reading uplink during playback and after STOP_DOWNLINK.
 - Never treat STOP_DOWNLINK as an uplink-stop command.
