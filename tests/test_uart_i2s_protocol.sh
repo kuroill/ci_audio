@@ -41,7 +41,8 @@ downlink_stop_body="$(sed -n '/static void stop_downlink(void)/,/^}/p' "$protoco
 ! echo "$downlink_stop_body" | grep -Eq 'cm_stop_codec\(PLAY_PRE_AUDIO_CODEC_ID,[[:space:]]*CODEC_INPUT\)' || { echo "FAIL: downlink stop incorrectly stops persistent I2S RX" >&2; exit 1; }
 ! echo "$downlink_stop_body" | grep -Eq 'audio_pre_rslt_stop' || { echo "FAIL: downlink stop incorrectly stops continuous uplink" >&2; exit 1; }
 echo "$downlink_stop_body" | grep -Eq 'cm_set_codec_mute\(PLAY_CODEC_ID,[[:space:]]*CODEC_OUTPUT,[[:space:]]*3,[[:space:]]*ENABLE\)' || { echo "FAIL: downlink stop does not mute DAC" >&2; exit 1; }
-echo "$downlink_stop_body" | grep -Eq 'audio_play_hw_pa_da_ctl\(DISABLE,[[:space:]]*true\)' || { echo "FAIL: downlink stop does not disable PA" >&2; exit 1; }
+! echo "$downlink_stop_body" | grep -Eq 'audio_play_hw_pa_da_ctl\(DISABLE,[[:space:]]*true\)' || { echo "FAIL: downlink stop disables always-on PA and makes later ding silent" >&2; exit 1; }
+echo "$downlink_stop_body" | grep -Eq 'ciss_set\(CI_SS_PLAY_STATE,[[:space:]]*CI_SS_PLAY_STATE_IDLE\)' || { echo "FAIL: downlink stop does not leave AEC playback state" >&2; exit 1; }
 downlink_task_body="$(sed -n '/static void downlink_task(void \*arg)/,/^}/p' "$protocol")"
 echo "$downlink_task_body" | grep -Eq 'cm_read_codec\(PLAY_PRE_AUDIO_CODEC_ID' || { echo "FAIL: idle worker does not continuously drain I2S RX" >&2; exit 1; }
 echo "$downlink_task_body" | grep -Eq 'i2s_rx_ready' || { echo "FAIL: RX worker can read before codec initialization" >&2; exit 1; }
@@ -51,6 +52,7 @@ echo "$start_downlink_body" | grep -Eq 'cm_config_pcm_buffer\(PLAY_CODEC_ID,[[:s
 echo "$start_downlink_body" | grep -Eq 'cm_config_codec\(PLAY_CODEC_ID,[[:space:]]*CODEC_OUTPUT' || { echo "FAIL: START does not restore DAC format" >&2; exit 1; }
 echo "$start_downlink_body" | grep -Eq 'cm_set_codec_mute\(PLAY_CODEC_ID,[[:space:]]*CODEC_OUTPUT,[[:space:]]*3,[[:space:]]*DISABLE\)' || { echo "FAIL: START does not unmute DAC" >&2; exit 1; }
 echo "$start_downlink_body" | grep -Eq 'audio_play_hw_pa_da_ctl\(ENABLE,[[:space:]]*true\)' || { echo "FAIL: START does not enable PA" >&2; exit 1; }
+echo "$start_downlink_body" | grep -Eq 'ciss_set\(CI_SS_PLAY_STATE,[[:space:]]*CI_SS_PLAY_STATE_PLAYING\)' || { echo "FAIL: START does not enter AEC playback state" >&2; exit 1; }
 must 'source-file: projects/offline_asr_llm_aiot_iis_sample/app/app_main/ai_uart_i2s_protocol.c' "$project" "protocol source not in build"
 must '^#define[[:space:]]+CIAS_AIOT_DEMO_ENABLE[[:space:]]+0' "$demo" "stock UART1 online demo still owns the transport"
 must '#if[[:space:]]+!CIAS_AIOT_DEMO_ENABLE' "$network_send" "legacy network send path can use an uninitialized queue"

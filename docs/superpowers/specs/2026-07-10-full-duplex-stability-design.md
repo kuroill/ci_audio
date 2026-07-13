@@ -11,7 +11,7 @@ Keep CI-to-ESP I2S uplink continuous while ESP-to-CI downlink audio is playing, 
 - A protocol task owns ACK, STATE, heartbeat, peer timeout, and downlink state transitions.
 - I2S0 TX is the continuous AEC/SSP uplink. START_DOWNLINK and STOP_DOWNLINK must never stop it.
 - I2S0 RX is initialized once and remains running while ESP supplies BCLK/LRCK. A single persistent worker always drains RX; it forwards frames only while downlink is enabled and discards idle frames otherwise.
-- Downlink start and stop control only local playback ownership, PCM forwarding, mute, and PA state. They do not stop or reconfigure I2S0 TX/RX.
+- Downlink start and stop control local playback ownership, PCM forwarding, DAC mute, and SDK play-state reporting. With `PLAYER_CONTROL_PA=0`, PA remains on so later local ding playback stays audible. They do not stop or reconfigure I2S0 TX/RX.
 
 ## Safety constraints
 
@@ -28,7 +28,7 @@ Keep CI-to-ESP I2S uplink continuous while ESP-to-CI downlink audio is playing, 
 2. CI protocol task drains stale RX data, configures the internal DAC as 16 kHz/16-bit/mono, unmutes it, enables PA, then returns ACK OK and STATE 0x04.
 3. ESP waits for ACK plus the configured settle interval and sends real PCM.
 4. ESP sends trailing silence and then STOP_DOWNLINK at natural completion or interruption.
-5. CI disables PCM forwarding, mutes the DAC, disables PA, continues draining RX, then returns ACK OK and STATE 0x02. Uplink TX and I2S clocks continue throughout.
+5. CI disables PCM forwarding, mutes the DAC, reports SDK play state idle, keeps PA on, continues draining RX, then returns ACK OK and STATE 0x02. Uplink TX and I2S clocks continue throughout.
 
 ## Audio format and playback recovery
 

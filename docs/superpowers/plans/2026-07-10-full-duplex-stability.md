@@ -63,7 +63,7 @@
 - [ ] Add failing checks that START configures `PLAY_CODEC_ID` as `16000 Hz / 16-bit / mono`, unmutes the DAC, and enables PA.
 - [ ] Keep IIS0 RX initialized and started once; discard frames while disabled and forward one sample from each stereo-slot pair while enabled.
 - [ ] On every START, stop/wait for any old player, drain stale RX frames, reapply the internal DAC buffer/format, start/unmute output, enable PA, then report success.
-- [ ] On STOP, disable forwarding first, mute DAC, disable PA, and leave IIS0 RX/TX running.
+- [ ] On START/STOP, report `CI_SS_PLAY_STATE_PLAYING/IDLE` for AEC interruption. On STOP, disable forwarding first, mute DAC, keep always-on PA enabled, and leave IIS0 RX/TX running.
 - [ ] Run the protocol regression test and verify it passes.
 
 ### Task 3A: Harden wake-ding interruption

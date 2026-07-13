@@ -13,6 +13,7 @@
 #include "ci130x_uart.h"
 #include "ci_assert.h"
 #include "codec_manager.h"
+#include "status_share.h"
 #include "system_msg_deal.h"
 #include "user_config.h"
 
@@ -139,10 +140,10 @@ static void stop_downlink(void)
     if(downlink_codec_started)
     {
         cm_set_codec_mute(PLAY_CODEC_ID, CODEC_OUTPUT, 3, ENABLE);
-        audio_play_hw_pa_da_ctl(DISABLE, true);
+        ciss_set(CI_SS_PLAY_STATE, CI_SS_PLAY_STATE_IDLE);
         downlink_codec_started = 0;
     }
-    mprintf("[DOWNLINK] stopped bytes=%u rx=drain pa=off\n", (unsigned int)downlink_bytes);
+    mprintf("[DOWNLINK] stopped bytes=%u rx=drain pa=keep-on\n", (unsigned int)downlink_bytes);
 }
 
 static void downlink_task(void *arg)
@@ -221,6 +222,7 @@ static uint8_t start_downlink(void)
     cm_start_codec(PLAY_CODEC_ID, CODEC_OUTPUT);
     cm_set_codec_mute(PLAY_CODEC_ID, CODEC_OUTPUT, 3, DISABLE);
     audio_play_hw_pa_da_ctl(ENABLE, true);
+    ciss_set(CI_SS_PLAY_STATE, CI_SS_PLAY_STATE_PLAYING);
     downlink_enabled = 1;
     send_state(AI_UART_STATE_DOWNLINK_PLAYING);
     mprintf("[DOWNLINK] started owner=ai_uart format=16000/16/mono pa=on\n");
