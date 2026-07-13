@@ -16,6 +16,9 @@
 #include "status_share.h"
 #include "system_msg_deal.h"
 #include "user_config.h"
+#include "cias_audio_data_handle.h"
+#include "ci130x_dpmu.h"
+#include "ci_flash_data_info.h"
 
 #define AI_UART_PROTOCOL_VERSION 0x04
 #define AI_UART_SOF0 0xA5
@@ -33,9 +36,11 @@
 #define AI_UART_MSG_DING_DONE 0x11
 #define AI_UART_MSG_UPLINK_READY 0x12
 #define AI_UART_MSG_STATE 0x16
+#define AI_UART_MSG_FIRMWARE_INFO 0x18
 #define AI_UART_MSG_START_DOWNLINK 0x22
 #define AI_UART_MSG_STOP_DOWNLINK 0x23
 #define AI_UART_MSG_ENTER_WAKEUP_WAIT 0x25
+#define AI_UART_MSG_ENTER_OTA_MODE 0x28
 
 #define AI_UART_ACK_OK 0x00
 #define AI_UART_ACK_UNSUPPORTED 0x02
@@ -114,6 +119,34 @@ static void send_frame(uint8_t type, const uint8_t *payload, uint16_t len)
     {
         xSemaphoreGive(send_mutex);
     }
+}
+
+static void send_firmware_info(void)
+{
+    const partition_table_t *table = get_partition_table();
+    uint8_t payload[9] = {0};
+    if(NULL == table)
+    {
+        mprintf("[OTA] firmware info unavailable: partition table missing\n");
+        return;
+    }
+    payload[0] = table->FirmwareFormatVer;
+    payload[1] = (uint8_t)(table->soft_ware_version >> 16);
+    payload[2] = (uint8_t)(table->soft_ware_version >> 8);
+    payload[3] = (uint8_t)table->soft_ware_version;
+    payload[4] = (uint8_t)(table->hard_ware_version >> 16);
+    payload[5] = (uint8_t)(table->hard_ware_version >> 8);
+    payload[6] = (uint8_t)table->hard_ware_version;
+    if(0xF0 == table->user_code1_status)
+    {
+        payload[7] = 1;
+    }
+    else if(0xF0 == table->user_code2_status)
+    {
+        payload[7] = 2;
+    }
+    payload[8] = 0;
+    send_frame(AI_UART_MSG_FIRMWARE_INFO, payload, sizeof(payload));
 }
 
 static void send_ack(uint8_t seq, uint8_t status)
@@ -237,6 +270,7 @@ static void mark_peer_rx(void)
     if(!was_ready)
     {
         audio_pre_rslt_start();
+        send_firmware_info();
         mprintf("[AI_UART] peer ready, continuous uplink enabled\n");
     }
 }
@@ -264,6 +298,19 @@ void ai_uart_i2s_handle_command(const ai_uart_i2s_command_t *cmd)
         stop_downlink();
         set_state_exit_wakeup();
         send_state(AI_UART_STATE_WAKEUP_WAIT);
+        break;
+    case AI_UART_MSG_ENTER_OTA_MODE:
+        stop_downlink();
+        if(CINV_OPER_SUCCESS != write_ota_mcu_status(5))
+        {
+            send_ack(cmd->seq, AI_UART_ACK_FAILED);
+            mprintf("[OTA] enter rejected reason=nv-write-failed\n");
+            break;
+        }
+        send_ack(cmd->seq, AI_UART_ACK_OK);
+        UartPollingSenddone((UART_TypeDef *)AI_UART_CONTROL_UART);
+        mprintf("[OTA] enter accepted; software reset into FW_V4 updater\n");
+        dpmu_software_reset_system_config();
         break;
     default:
         send_ack(cmd->seq, AI_UART_ACK_UNSUPPORTED);
