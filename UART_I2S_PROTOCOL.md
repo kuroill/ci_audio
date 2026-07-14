@@ -379,9 +379,10 @@ AI_UART peer timeout, stop continuous uplink and restart handshake
 1. ESP32 完整下载并校验升级包，不允许边下载边覆盖 CI。
 2. ESP32 停止新的 HTTP upload/downlink，并等待当前 CI UART 关键命令结束。
 3. ESP32 发送空 payload 的 `ENTER_OTA_MODE(0x28)`。
-4. CI 停止当前播放，写入 `NVDATA_ID_OTA_MCU_STATUS=5`。写入成功后先返回原命令 `SEQ` 对应的 `ACK(status=0x00)`，等待 UART 发送完成，再软件复位进入原厂 updater。
+4. CI 停止当前播放，初始化或写入 `NVDATA_ID_OTA_MCU_STATUS=5`，并回读确认长度和值均正确。持久化成功后先返回原命令 `SEQ` 对应的 `ACK(status=0x00)`，等待 UART 发送完成，再软件复位进入原厂 updater。
 5. CI 不能进入时返回 `ACK(status=0x03)`，并保持原正常状态，不得部分擦除 Flash。
-6. ESP32 只有收到成功 ACK 后才能发送 OTA 数据；不能用固定延时替代 ACK。
+6. CI 明确返回非 `0x00` ACK 时，ESP32 必须直接按 CI handoff 失败结果上报，不得用本地超时覆盖该结果。若 ACK 因复位边界未收到，ESP32 只能继续发送 `CHECK_READY` 确认 CI 的实际运行态，不能直接推断 CI 执行失败。
+7. `CHECK_READY` 成功 ACK 是 updater 已运行的权威结果；ESP32 只有收到该结果后才能发送 OTA 数据。ESP32 在 15 秒通信截止时间内持续探测，截止时间仅用于报告“CI updater 未响应”，不得表述为 CI 拒绝或执行失败，也不能按普通命令的 3 次重试提前结束。
 
 ### 12.4 OTA 数据传输
 

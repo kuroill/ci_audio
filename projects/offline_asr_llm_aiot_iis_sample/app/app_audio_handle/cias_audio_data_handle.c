@@ -988,5 +988,18 @@ bool cias_online_func_init(void)
 cinv_item_ret_t write_ota_mcu_status(uint8_t status)
 {
     uint8_t flag = status;
-	return cinv_item_write(NVDATA_ID_OTA_MCU_STATUS, sizeof(uint8_t), &flag);
+    cinv_item_ret_t init_ret = cinv_item_init(
+        NVDATA_ID_OTA_MCU_STATUS,
+        sizeof(flag),
+        &flag);
+
+    if(CINV_ITEM_UNINIT == init_ret)
+    {
+        return CINV_OPER_SUCCESS;
+    }
+    if(CINV_OPER_SUCCESS != init_ret)
+    {
+        return init_ret;
+    }
+    return cinv_item_write(NVDATA_ID_OTA_MCU_STATUS, sizeof(flag), &flag);
 }
