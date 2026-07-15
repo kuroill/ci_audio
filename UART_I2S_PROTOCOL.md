@@ -339,104 +339,50 @@ AI_UART peer timeout, stop continuous uplink and restart handshake
 - 不在任何 ACK 失败场景下把约 3000ms 对端超时当作唯一恢复手段；关键命令必须先走 6.1 的重试/本地强制回退逻辑。
 - 播放期间不暂停采音、AEC/SSP 或 I2S 上行（`PAUSE_VOICE_IN_WITH_PLAYING` 保持关闭）。
 
-## 11. 实施检查清单
+## 11. CI1306 OTA V4.1.5
 
-- [ ] 3.2：ESP32 下行写入前确认 mono 样本已复制到 left/right 两个 physical slot
-- [ ] 3.2 / 7.1：ESP32 在非播放期间（含启动后、STOP_DOWNLINK 后）DOUT 持续输出静音 PCM
-- [ ] 3.2 / 7.4：CI 在非播放期间持续读取并丢弃 IIS0 RX，不停止 RX DMA
-- [ ] 3.2 / 7.4：CI 下行从双 slot 选取单个 slot，写入 DAC 的数据为 16 kHz / 16-bit / mono
-- [ ] 7.4：每次 START_DOWNLINK 都重新配置 DAC buffer/格式、解除静音并打开 PA
-- [ ] 7.4：START/STOP 分别设置 `CI_SS_PLAY_STATE=PLAYING/IDLE`，确保 AEC 播放中唤醒打断生效
-- [ ] 7.4：`PLAYER_CONTROL_PA=0` 时 STOP_DOWNLINK 只停止 PCM 转发并静音 DAC，不关闭 PA，不停止 IIS0 RX/TX
-- [ ] 7.4：DING_DONE 只在提示音真实播放完成回调中发送
-- [ ] 6.1：START_DOWNLINK / STOP_DOWNLINK / ENTER_WAKEUP_WAIT 的 ACK status 均已接入失败处理分支
-- [ ] 6.2：UPLINK_READY 参数校验失败时有日志且不误更新本地参数假设
-- [ ] 7.1：ESP32 侧新增约 3000ms 对端超时检测，日志格式与 8.1 一致
-- [ ] 7.4：DOWNLINK_START_SETTLE_MS 锚定在收到 ACK 之后，而非命令发出后盲等
-- [ ] 2.1：生产接线 SOP / 首件检验已加入 TX1/RX1 歧义提示
-- [ ] 8.1：全部关键日志已补齐，便于量产阶段远程排障
+### 11.1 CI 侧职责
 
-## 12. CI1306 FW_V4 OTA
+- 正常 user_code 收到空 payload 的 `ENTER_OTA_MODE(0x28)` 后，停止播放，可靠写入并回读 `NVDATA_ID_OTA_MCU_STATUS=5`，返回普通协议 ACK，再软件复位。
+- 复位后由供应商 updater 独占 UART，执行 OTA 包检查、擦除、分区写入、CRC 和最终状态返回。正常 user_code 不自行实现 Flash 写入协议。
+- updater 使用 OTA Tool 配置的 UART 和 921600 波特率；不得开启会改变线上帧格式的自定义协议转换。
+- 新 user_code 启动后继续通过普通协议上报 `FIRMWARE_INFO`，作为启动版本和健康状态的二次观测。
 
-> OTA 线上协议以 `lenwell-firmware/UART_I2S_PROTOCOL.md` 第 12 节为唯一实现定义。本节只规定 CI user_code 的进入和启动确认职责，早期“ESP 自定义双 user_code 槽传输”方案已废弃，不得继续实现。
+### 11.2 供应商产物
 
-### 12.1 目标与范围
-
-- ESP32 负责通过 HTTPS 完整下载 CI1306 升级包，并在发送给 CI 前校验云端下发的 SHA-256。
-- CI1306 升级期间允许停止全部音频和对话能力，只保留 UART1 OTA、Flash 写入、看门狗和必要错误日志。
-- UART1 始终只有一个 owner。正常模式由 Lenwell `A5 5A` parser 持有；OTA 模式由同一 owner 将收到的字节转交启英泰伦 FW_V4 `A5 0F` OTA parser。OTA 代码不得重新注册或覆盖 UART1 ISR。
-- 升级产物是原厂 Windows SDK 生成的完整 FW_V4，可包含 user_code、算法模型、提示音和 user_file 等 SDK 资源。
-- ESP 不按自定义分区写入；进入原厂 updater 后，完整镜像的擦除、写入、校验和启动选择均由原厂 updater 负责。
-
-### 12.2 不可变区域与升级产物
-
-- 升级产物必须由当前官方 Windows SDK 按 `FW_V4` OTA 格式生成，不接受裸 Flash dump、未知工具生成包或任意地址写入指令。
-- ESP 在进入 updater 前校验云端 SHA-256；传输前继续校验 FW_V4 主备分区表、表校验和、各有效分区范围及 CRC，并用 updater `GET_INFO` 校验当前设备的产品、硬件和芯片身份。
-- 原厂 updater 是否能在所有擦写阶段掉电后自动恢复，必须通过官方结论或实机断电测试确认，不能由 user_code 或 ESP 软件声明保证。
-
-### 12.3 进入 OTA 模式
-
-1. ESP32 完整下载并校验升级包，不允许边下载边覆盖 CI。
-2. ESP32 停止新的 HTTP upload/downlink，并等待当前 CI UART 关键命令结束。
-3. ESP32 发送空 payload 的 `ENTER_OTA_MODE(0x28)`。
-4. CI 停止当前播放，初始化或写入 `NVDATA_ID_OTA_MCU_STATUS=5`，并回读确认长度和值均正确。持久化成功后先返回原命令 `SEQ` 对应的 `ACK(status=0x00)`，等待 UART 发送完成，再软件复位进入原厂 updater。
-5. CI 不能进入时返回 `ACK(status=0x03)`，并保持原正常状态，不得部分擦除 Flash。
-6. CI 明确返回非 `0x00` ACK 时，ESP32 必须直接按 CI handoff 失败结果上报，不得用本地超时覆盖该结果。若 ACK 因复位边界未收到，ESP32 只能继续发送 `CHECK_READY` 确认 CI 的实际运行态，不能直接推断 CI 执行失败。
-7. `CHECK_READY` 成功 ACK 是 updater 已运行的权威结果；ESP32 只有收到该结果后才能发送 OTA 数据。ESP32 在 15 秒通信截止时间内持续探测，截止时间仅用于报告“CI updater 未响应”，不得表述为 CI 拒绝或执行失败，也不能按普通命令的 3 次重试提前结束。
-
-### 12.4 OTA 数据传输
-
-- updater 帧固定为：`A5 0F + payload_len:u16le + frame_type + command + number + payload + crc16:u16le + FF`。
-- `frame_type`：`A0=CMD`、`A1=REQ`、`A2=ACK`、`A3=NOTIFY`。CRC16-CCITT 覆盖 `frame_type..payload`，多项式 `0x1021`、初值 `0`。
-- ESP 按 `CHECK_READY -> GET_INFO -> BLOCK_INFO -> ERASE -> WRITE -> WRITE_DONE -> VERIFY -> COMPLETE -> SYSTEM_RESET` 执行完整镜像升级。
-- `WRITE` 由 updater 主动请求 `offset:u32le + size:u32le`，ESP 按请求 offset 返回数据；禁止用 ESP 本地自增包号替代 updater 的 offset。
-- 完整 FW_V4 从地址 0 写入，长度按 4096 bytes 补 `FF`；`VERIFY` CRC 覆盖补齐后的完整数据。
-- 整包写入或校验失败时，ESP 自动从 `BLOCK_INFO + ERASE` 完整重试一次；不得从不确定的本地 offset 继续写。
-
-### 12.5 完成、试运行与回滚
-
-1. updater 完成整包 CRC 校验并收到 `COMPLETE` 后，由 ESP 发送 `SYSTEM_RESET`。
-2. 新 user_code 启动 UART，并在首次 PING/PONG 握手建立时发送 `FIRMWARE_INFO(0x18)`：
+ESP32 下发的文件必须是 V4 制作工具由完整 `Firmware_V*.bin` 转换出的 `ota_firmware.bin`：
 
 ```text
-offset  size  field
-0       1     format = 0x01
-1       3     software version: major, minor, patch
-4       3     hardware version: major, minor, patch
-7       1     active_slot: 1 or 2
-8       1     boot_state: 0=healthy
+0x0000..0x0fff  OTA 分区清单和 header CRC
+0x1000..0x1fff  278-byte 分区表及 padding
+0x2000..         按清单顺序拼接的分区数据
 ```
 
-3. ESP32 只有收到与目标 FW_V4 格式、软件版本、硬件版本一致，且 `active_slot != 0`、`boot_state=0` 的报告，才能向云端报告 CI OTA 成功。
+可选分区为 `user_code2/asr/dnn/voice/user_file`。完整 `Firmware_V*.bin`、updater code1 和裸 Flash dump 都不是 UART OTA 传输产物。
 
-### 12.6 禁止事项
+### 11.3 V4.1.5 标准帧
 
-- 禁止收到 `ENTER_OTA_MODE` 后立即擦除任何分区；必须先完成请求校验并成功 ACK。
-- 禁止 OTA 模块自行接管 UART1 中断向量。
-- 禁止仅凭“升级数据发送完成”向云端报告成功，必须等待新固件启动确认。
+```text
+A5 0F + length:u16be + type:u8 + payload + crc16:u16be + FF
+length = 1(type) + payload + 2(CRC) + 1(tail)
+CRC16-CCITT(init=0) 覆盖 A5 0F、length、type、payload
+```
 
-### 12.7 后续实施检查清单
+消息：
 
-- [x] ESP32 实现 CI1306 独立 OTA target、完整下载和 SHA-256 预校验
-- [x] 按原厂 updater 源码冻结 FW_V4 `A5 0F` 逐字节协议
-- [x] CI UART 单一 owner 在 OTA 调用期间独占 normal/updater 收发
-- [x] CI 新 user_code 首次握手上报 `FIRMWARE_INFO`
-- [ ] Windows SDK 正式生成包含本次 CI 修改的 FW_V4
-- [ ] 验证传输断线、CRC 错误、updater 已运行时重试
-- [ ] 在擦除、写入、校验、元数据提交、首次启动各阶段执行断电测试
-- [ ] 验证提示音、唤醒词、模型资源、UART/I2S 和再次 OTA
-- [x] ESP32 仅在 `FIRMWARE_INFO` 报告目标版本已确认后上报 OTA 成功
+- `A0`：host 下发版本和校验参数；CI 返回 `[allowed,currentVersion3,result]`。
+- `A3`：host 下发 `[0]` 启动 CI 本体升级；CI 返回 `A2/UPDATING_CI`。
+- `A1`：CI 请求 `[result,current:u16be,next:u16be]`；host 返回 `[packet:u16be,data<=4096]`。
+- `A2`：CI 周期上报 `[WAITING,reason]`；host 传输完成后发送空 A2，CI 返回最终 `[SUCCEEDED|FAILED,result]`。
 
-## 13. ESP32 本次必须配合的改动
+当前 updater 实机等待帧：
 
-本节是本次 CI1306 全双工稳定性修复对应的 ESP32 必改项；完成这些改动前，不应把整机下行播放流程视为验收完成。
+```text
+A5 0F 00 06 A2 02 01 FB 8D FF
+```
 
-1. 自然播放结束后，ESP32 必须继续输出 40-100 ms 全零静音 PCM，然后发送 `STOP_DOWNLINK`，不能只在本地切回静音而长期不通知 CI。
-2. ESP32 必须等待 `STOP_DOWNLINK` 的 ACK；等待期间继续提供 BCLK/LRCK、输出静音 DOUT，并持续读取 CI 上行。
-3. `STOP_DOWNLINK` 成功或超时都不得停止 I2S master，也不得停止读取 CI 上行；该命令只结束当前下行播放。
-4. 播放被插话、唤醒词、网络错误或 worker 异常打断时，同样发送 `STOP_DOWNLINK`。
-5. 收到成功 ACK 后期望 CI 返回 `STATE=0x02`；若状态连续不一致，只记录并恢复状态机，不关闭上行总线。
-6. `START_DOWNLINK` 仍须等待成功 ACK，再等待 `DOWNLINK_START_SETTLE_MS=30` 后发送真实 PCM。
-7. 非播放期间继续在 DOUT 输出全零 PCM，保持 BCLK/LRCK 连续，避免 CI I2S RX 输入悬空。
-8. ESP32 必须按 standard I2S 双 slot 写入下行：同一个 mono 样本同时复制到 left/right slot；不得把连续 mono 字节流直接当成双 slot DMA 数据。
-9. ESP32 不得通过停 BCLK/LRCK 或停止 DOUT DMA 表达播放结束；播放状态只由 UART `START_DOWNLINK/STOP_DOWNLINK` 表达。
+### 11.4 结果语义
+
+- ESP32 必须按 CI 的 A1 `next` 包号发送，不得自行推断或跳包。
+- 最终升级结果由 updater 返回的 `A2/SUCCEEDED` 或 `A2/FAILED + 原厂错误码`决定；本地发送完成、超时或看到 CI 重启不能替代 CI 结果。
+- `FIRMWARE_INFO` 是成功后启动观测，不反向覆盖 updater 已返回的最终结果。
