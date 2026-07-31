@@ -56,6 +56,7 @@ static volatile uint8_t current_state = AI_UART_STATE_WAKEUP_WAIT;
 static volatile uint8_t downlink_enabled;
 static volatile uint8_t downlink_codec_started;
 static volatile uint8_t i2s_rx_ready;
+static volatile uint8_t firmware_info_sent;
 static volatile TickType_t last_peer_tick;
 static uint8_t tx_seq;
 static uint32_t downlink_bytes;
@@ -137,16 +138,17 @@ static void send_firmware_info(void)
     payload[4] = (uint8_t)(table->hard_ware_version >> 16);
     payload[5] = (uint8_t)(table->hard_ware_version >> 8);
     payload[6] = (uint8_t)table->hard_ware_version;
-    if(0xF0 == table->user_code1_status)
-    {
-        payload[7] = 1;
-    }
-    else if(0xF0 == table->user_code2_status)
+    if(0xF0 == table->user_code2_status)
     {
         payload[7] = 2;
     }
+    else if(0xF0 == table->user_code1_status)
+    {
+        payload[7] = 1;
+    }
     payload[8] = 0;
     send_frame(AI_UART_MSG_FIRMWARE_INFO, payload, sizeof(payload));
+    firmware_info_sent = 1;
 }
 
 static void send_ack(uint8_t seq, uint8_t status)
@@ -270,7 +272,10 @@ static void mark_peer_rx(void)
     if(!was_ready)
     {
         audio_pre_rslt_start();
-        send_firmware_info();
+        if(i2s_rx_ready && !firmware_info_sent)
+        {
+            send_firmware_info();
+        }
         mprintf("[AI_UART] peer ready, continuous uplink enabled\n");
     }
 }
@@ -441,6 +446,10 @@ int ai_uart_i2s_peer_ready(void)
 void ai_uart_i2s_on_audio_ready(void)
 {
     i2s_rx_ready = 1;
+    if(peer_ready && !firmware_info_sent)
+    {
+        send_firmware_info();
+    }
 }
 
 static void heartbeat_task(void *arg)
