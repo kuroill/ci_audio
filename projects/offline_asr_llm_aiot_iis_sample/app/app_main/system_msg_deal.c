@@ -684,7 +684,7 @@ uint8_t vol_set(char vol)
     if(vol <= VOLUME_MAX && vol >= VOLUME_MIN && sys_manage_data.volset != vol)
     {
         sys_manage_data.volset = vol;
-        audio_play_set_vol_gain(67*vol/VOLUME_MAX + 7);
+        audio_play_set_vol_gain(VOLUME_OUTPUT_MAX_PERCENT * vol / VOLUME_MAX);
         cinv_item_write(NVDATA_ID_VOLUME, sizeof(sys_manage_data.volset), &sys_manage_data.volset);
     }
     return sys_manage_data.volset;

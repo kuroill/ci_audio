@@ -50,6 +50,7 @@
 #include "cias_network_msg_protocol.h"
 #include "timers.h"
 #include "ci_agc.h"
+#include "user_config.h"
 /**
  * @brief 硬件初始化
  *          这个函数主要用于系统上电后初始化硬件寄存器到初始值，配置中断向量表初始化芯片io配置时钟
@@ -382,7 +383,7 @@ static void task_init(void *p_arg)
     #if USE_TTS
     get_ci_tts_model_addr();
     audio_play_init();
-    audio_play_set_vol_gain(85);
+    audio_play_set_vol_gain(VOLUME_OUTPUT_MAX_PERCENT);
     sys_tts_msg_task_initial();
     tts_module_init();
     vTaskDelay(pdMS_TO_TICKS(10));

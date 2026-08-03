@@ -187,7 +187,8 @@ chipintelli提供的部分开发板和模组，可以通过下面的宏选择，
 #define PLAYER_CONTROL_PA               0   //是否有播放器控音频功放开关。0:功放常开,1:播放器在需要播放时才打开,但可能增加一点每一次播放的延迟时间
 #define VOLUME_MAX                      7   //设置音量调节的上限值，对应硬件支持的最大音量。
 #define VOLUME_MIN                      1   //设置音量调节的下限值，对应最小音量。
-#define VOLUME_DEFAULT                  5   //设置音量调节的默认值。
+#define VOLUME_DEFAULT                  VOLUME_MAX   //默认使用最大音量，仍保留运行时音量调节能力。
+#define VOLUME_OUTPUT_MAX_PERCENT       100 //最大档对应 codec DAC 满量程增益。
 
 #if AUDIO_PLAYER_ENABLE
 #if NET_AUDIO_PLAY_BY_OPUS
