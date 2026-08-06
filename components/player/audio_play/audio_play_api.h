@@ -54,6 +54,7 @@ uint32_t get_play_offset(void);
 uint32_t get_data_load_offset(void);
 void audio_play_set_vol_gain(int32_t gain);
 int32_t audio_play_get_vol_gain(void);
+void audio_play_apply_dac_digital_gain(void);
 void audio_play_set_mute(bool is_mute);
 void audio_play_hw_pa_da_ctl(FunctionalState cmd,bool is_control_pa);
 void set_play_speed(float play_speed);

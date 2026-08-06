@@ -87,12 +87,17 @@ void audio_play_set_vol_gain(int32_t gain)
     g_audio_play_gain = gain;
 
     cm_set_codec_dac_gain(sg_play_device_index, 0, gain);
-    if(gain > 0)
+    audio_play_apply_dac_digital_gain();
+}
+
+void audio_play_apply_dac_digital_gain(void)
+{
+    if(g_audio_play_gain > 0)
     {
         inner_codec_dac_dig_gain_set(PLAYBACK_DAC_DIGITAL_GAIN_DB);
         mprintf(
             "[AUDIO] playback gain applied: hpoutPercent=%d, dacDigitalGainDb=%d\n",
-            gain,
+            g_audio_play_gain,
             PLAYBACK_DAC_DIGITAL_GAIN_DB);
     }
     else

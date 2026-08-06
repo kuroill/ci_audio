@@ -257,10 +257,14 @@ static uint8_t start_downlink(void)
     cm_start_codec(PLAY_CODEC_ID, CODEC_OUTPUT);
     cm_set_codec_mute(PLAY_CODEC_ID, CODEC_OUTPUT, 3, DISABLE);
     audio_play_hw_pa_da_ctl(ENABLE, true);
+    /* Reapply after codec/PA startup in case the DAC start sequence restored digital gain. */
+    audio_play_apply_dac_digital_gain();
     ciss_set(CI_SS_PLAY_STATE, CI_SS_PLAY_STATE_PLAYING);
     downlink_enabled = 1;
     send_state(AI_UART_STATE_DOWNLINK_PLAYING);
-    mprintf("[DOWNLINK] started owner=ai_uart format=16000/16/mono pa=on\n");
+    mprintf(
+        "[DOWNLINK] started owner=ai_uart format=16000/16/mono pa=on dacDigitalGainDb=%d\n",
+        PLAYBACK_DAC_DIGITAL_GAIN_DB);
     return 1;
 }
 
