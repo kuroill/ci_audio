@@ -32,6 +32,14 @@ extern int cm_write_codec(int codec_index, void * pcm_buffer,uint32_t wait_tick)
 int sg_play_device_index = PLAY_CODEC_ID;
 static int32_t g_audio_play_gain = 0;
 
+#ifndef PLAYBACK_DAC_DIGITAL_GAIN_DB
+#define PLAYBACK_DAC_DIGITAL_GAIN_DB 0
+#endif
+
+#if (PLAYBACK_DAC_DIGITAL_GAIN_DB < -117) || (PLAYBACK_DAC_DIGITAL_GAIN_DB > 10)
+#error "PLAYBACK_DAC_DIGITAL_GAIN_DB must be in the CI1306 DAC range [-117, 10] dB"
+#endif
+
 
 /**
  * @brief buf释放回调函数
@@ -79,6 +87,18 @@ void audio_play_set_vol_gain(int32_t gain)
     g_audio_play_gain = gain;
 
     cm_set_codec_dac_gain(sg_play_device_index, 0, gain);
+    if(gain > 0)
+    {
+        inner_codec_dac_dig_gain_set(PLAYBACK_DAC_DIGITAL_GAIN_DB);
+        mprintf(
+            "[AUDIO] playback gain applied: hpoutPercent=%d, dacDigitalGainDb=%d\n",
+            gain,
+            PLAYBACK_DAC_DIGITAL_GAIN_DB);
+    }
+    else
+    {
+        mprintf("[AUDIO] playback gain applied: muted\n");
+    }
 }
 
 

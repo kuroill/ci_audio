@@ -189,6 +189,7 @@ chipintelli提供的部分开发板和模组，可以通过下面的宏选择，
 #define VOLUME_MIN                      1   //设置音量调节的下限值，对应最小音量。
 #define VOLUME_DEFAULT                  VOLUME_MAX   //默认使用最大音量，仍保留运行时音量调节能力。
 #define VOLUME_OUTPUT_MAX_PERCENT       100 //最大档对应 codec DAC 满量程增益。
+#define PLAYBACK_DAC_DIGITAL_GAIN_DB    10  //DAC 数字增益上限为 +10dB；当前样品用于验证最大播放响度。
 
 #if AUDIO_PLAYER_ENABLE
 #if NET_AUDIO_PLAY_BY_OPUS
