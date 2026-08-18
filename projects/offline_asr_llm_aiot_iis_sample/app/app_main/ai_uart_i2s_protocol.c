@@ -346,18 +346,18 @@ void ai_uart_i2s_handle_command(const ai_uart_i2s_command_t *cmd)
             break;
         }
         requested_percent = (uint16_t)cmd->payload[0] | ((uint16_t)cmd->payload[1] << 8);
-        if((requested_percent < 10U) || (requested_percent > 500U))
+        if((requested_percent < 1U) || (requested_percent > 100U))
         {
             send_ack(cmd->seq, AI_UART_ACK_FAILED);
-            mprintf("[AUDIO] runtime volume rejected percent=%u range=10..500\n",
+            mprintf("[AUDIO] runtime volume rejected percent=%u range=1..100\n",
                 (unsigned int)requested_percent);
             break;
         }
         vol_set_from_esp_percent(requested_percent);
         send_ack(cmd->seq, AI_UART_ACK_OK);
-        mprintf("[AUDIO] runtime volume applied requestedPercent=%u promptPercent=%u persisted=false\n",
+        mprintf("[AUDIO] runtime volume applied requestedPercent=%u promptRatioPercent=60 promptPcmGainPermille=%u persisted=false\n",
             (unsigned int)requested_percent,
-            (unsigned int)requested_percent);
+            ((unsigned int)requested_percent * 6U) / 5U);
         break;
     }
     case AI_UART_MSG_ENTER_WAKEUP_WAIT:

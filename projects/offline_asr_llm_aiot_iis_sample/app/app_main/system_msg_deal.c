@@ -1252,7 +1252,7 @@ void UserTaskManageProcess(void *p_arg)
                      * ESP32 有保存值时会在握手后通过 SET_VOLUME 覆盖。 */
                     esp_volume_override_active = 0;
                     audio_play_set_vol_gain(VOLUME_OUTPUT_MAX_PERCENT);
-                    audio_play_set_pcm_gain_percent(100U);
+                    audio_play_set_pcm_gain_percent(50U);
 
                     #if (EXCEPTION_RST_SKIP_BOOT_PROMPT)
                     if (RETURN_OK != scu_get_system_reset_state())

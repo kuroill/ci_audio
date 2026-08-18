@@ -31,7 +31,10 @@ extern int cm_write_codec(int codec_index, void * pcm_buffer,uint32_t wait_tick)
 
 int sg_play_device_index = PLAY_CODEC_ID;
 static int32_t g_audio_play_gain = 0;
-static volatile uint16_t g_audio_play_pcm_gain_percent = 100;
+static volatile uint16_t g_audio_play_pcm_gain_percent = 50;
+
+#define ESP_VOLUME_TO_LOCAL_PROMPT_NUMERATOR 3
+#define ESP_VOLUME_TO_LOCAL_PROMPT_DENOMINATOR 2500
 
 #ifndef PLAYBACK_DAC_DIGITAL_GAIN_DB
 #define PLAYBACK_DAC_DIGITAL_GAIN_DB 0
@@ -120,16 +123,18 @@ int32_t audio_play_get_vol_gain(void)
 
 void audio_play_set_pcm_gain_percent(uint16_t percent)
 {
-    if(percent < 10U)
+    if(percent < 1U)
     {
-        percent = 10U;
+        percent = 1U;
     }
-    else if(percent > 500U)
+    else if(percent > 100U)
     {
-        percent = 500U;
+        percent = 100U;
     }
     g_audio_play_pcm_gain_percent = percent;
-    mprintf("[AUDIO] local PCM gain applied: percent=%u\n", (unsigned int)percent);
+    mprintf("[AUDIO] local PCM volume applied: levelPercent=%u promptRatioPercent=60 pcmGainPermille=%u\n",
+        (unsigned int)percent,
+        ((unsigned int)percent * 6U) / 5U);
 }
 
 void audio_play_apply_pcm_gain(void* pcm_buf,uint32_t buf_size)
@@ -139,7 +144,8 @@ void audio_play_apply_pcm_gain(void* pcm_buf,uint32_t buf_size)
     uint32_t sample_count = buf_size / sizeof(int16_t);
     for(uint32_t i = 0; i < sample_count; i++)
     {
-        int32_t scaled = ((int32_t)output_pcm[i] * (int32_t)gain_percent) / 100;
+        int32_t scaled = ((int32_t)output_pcm[i] * (int32_t)gain_percent *
+            ESP_VOLUME_TO_LOCAL_PROMPT_NUMERATOR) / ESP_VOLUME_TO_LOCAL_PROMPT_DENOMINATOR;
         if(scaled > 32767)
         {
             scaled = 32767;
