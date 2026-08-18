@@ -357,7 +357,7 @@ void ai_uart_i2s_handle_command(const ai_uart_i2s_command_t *cmd)
         send_ack(cmd->seq, AI_UART_ACK_OK);
         mprintf("[AUDIO] runtime volume applied requestedPercent=%u promptRatioPercent=60 promptPcmGainPermille=%u persisted=false\n",
             (unsigned int)requested_percent,
-            ((unsigned int)requested_percent * 6U) / 5U);
+            ((unsigned int)requested_percent * 12U) / 5U);
         break;
     }
     case AI_UART_MSG_ENTER_WAKEUP_WAIT:
@@ -520,7 +520,10 @@ void ai_uart_i2s_protocol_init(void)
     CI_ASSERT(send_mutex, "ai uart resources\n");
     task_created = xTaskCreate(heartbeat_task, "ai_uart", 384, NULL, 3, NULL);
     CI_ASSERT(pdPASS == task_created, "ai uart task\n");
-    task_created = xTaskCreate(downlink_task, "ai_downlink", 512, NULL, 4, NULL);
+    /* Keep local prompt decode/playback (priority 4) ahead of the continuous I2S drain.
+     * During ESP downlink the local player is idle, so priority 3 still owns the raw feed. */
+    task_created = xTaskCreate(
+        downlink_task, "ai_downlink", 512, NULL, AI_DOWNLINK_TASK_PRIORITY, NULL);
     CI_ASSERT(pdPASS == task_created, "ai downlink task\n");
     __eclic_irq_set_vector(UART1_IRQn, (int32_t)uart_irq_handler);
     UARTInterruptConfig((UART_TypeDef *)AI_UART_CONTROL_UART, AI_UART_CONTROL_BAUDRATE);

@@ -34,7 +34,7 @@ static int32_t g_audio_play_gain = 0;
 static volatile uint16_t g_audio_play_pcm_gain_percent = 50;
 
 #define ESP_VOLUME_TO_LOCAL_PROMPT_NUMERATOR 3
-#define ESP_VOLUME_TO_LOCAL_PROMPT_DENOMINATOR 2500
+#define ESP_VOLUME_TO_LOCAL_PROMPT_DENOMINATOR 1250
 
 #ifndef PLAYBACK_DAC_DIGITAL_GAIN_DB
 #define PLAYBACK_DAC_DIGITAL_GAIN_DB 0
@@ -134,7 +134,7 @@ void audio_play_set_pcm_gain_percent(uint16_t percent)
     g_audio_play_pcm_gain_percent = percent;
     mprintf("[AUDIO] local PCM volume applied: levelPercent=%u promptRatioPercent=60 pcmGainPermille=%u\n",
         (unsigned int)percent,
-        ((unsigned int)percent * 6U) / 5U);
+        ((unsigned int)percent * 12U) / 5U);
 }
 
 void audio_play_apply_pcm_gain(void* pcm_buf,uint32_t buf_size)

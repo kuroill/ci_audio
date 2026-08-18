@@ -63,6 +63,7 @@ chipintelli提供的部分开发板和模组，可以通过下面的宏选择，
 #define AI_UART_CONTROL_UART           HAL_UART1_BASE
 #define AI_UART_CONTROL_BAUDRATE       UART_BaudRate921600
 #define AI_UART_TASK_POLL_MS           50
+#define AI_DOWNLINK_TASK_PRIORITY      3
 #define AI_I2S_RUNTIME_UPLINK_EN       1
 
 #define MSG_COM_USE_UART_EN            0   //0,关闭语音模块通讯协议。1,开启语音模块通讯协议。

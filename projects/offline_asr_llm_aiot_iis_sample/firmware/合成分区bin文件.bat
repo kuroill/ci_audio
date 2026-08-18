@@ -210,7 +210,12 @@ for %%j in (%2\*) do (
     )
 	@REM ..\!TOOLS_PATH!\wav_to_mp3_flac.exe -f mp3 -i "!ttt!" -o "!output_name!"
 	@REM ..\!TOOLS_PATH!\lame --silent --cbr -b24 -t --resample 16000 --out-file "!output_name!" "!ttt!"  
-	..\!TOOLS_PATH!\lame --silent --cbr -b16 -t --resample 16000 "!ttt!" "!output_name!"
+	@REM 宽频瞬态 ding 在 16 kbps 下容易出现瞬时发虚/颤动，只提高该音效码率，避免整包语音膨胀。
+	if /I "%%~nxj" == "[1000]ding.wav" (
+		..\!TOOLS_PATH!\lame --silent --cbr -b64 -t --resample 16000 "!ttt!" "!output_name!"
+	) else (
+		..\!TOOLS_PATH!\lame --silent --cbr -b16 -t --resample 16000 "!ttt!" "!output_name!"
+	)
 	@REM ..\!TOOLS_PATH!\ci-tool-kit ID3-editor -i !output_name!
 )
 if exist !cfg_in! ( 
