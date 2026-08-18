@@ -217,30 +217,28 @@ void audio_play_hw_pa_da_ctl(FunctionalState cmd,bool is_control_pa)
 void audio_play_hw_start(FunctionalState pa_cmd, audio_format_info_t *audio_format_info)
 {
 	//播放之前，关ALC
-    static uint32_t last_hw_samplerate = 0; 
-    static uint32_t last_hw_block_size = 0;     
-    
     // 配置声卡
     cm_sound_info_t sound_info;
-
-    static uint32_t pre_sample_rate = 0;
-    static uint32_t pre_nChans = 0;
 
     sound_info.sample_rate = audio_format_info->samprate;
     sound_info.channel_flag = (audio_format_info->nChans == 2) ? 3:1;
     sound_info.sample_depth = IIS_DW_16BIT;
-    #if NET_AUDIO_PLAY_BY_OPUS||NET_AUDIO_PLAY_BY_PCM   //每次都需重新初始化播放器
-    #else
-    if((pre_sample_rate != audio_format_info->samprate) || (pre_nChans != audio_format_info->nChans))
-    #endif
-    {
-        pre_sample_rate = sound_info.sample_rate;
-        pre_nChans = audio_format_info->nChans;
-        cm_config_codec(sg_play_device_index, CODEC_OUTPUT, &sound_info);
-    }
-    
+
+    /*
+     * PLAY_CODEC_ID is shared with the ESP downlink owner, which configures it
+     * directly for each cloud reply. A private "last local format" cache is
+     * therefore not authoritative: after downlink stop it can cause the next
+     * local prompt to inherit the downlink codec/DAC state. Restore the full
+     * local playback contract on every local start.
+     */
+    cm_config_codec(sg_play_device_index, CODEC_OUTPUT, &sound_info);
     cm_start_codec(sg_play_device_index, CODEC_OUTPUT);
     cm_set_codec_mute(sg_play_device_index, CODEC_OUTPUT, 3, DISABLE);
+    audio_play_apply_dac_digital_gain();
+    mprintf(
+        "[AUDIO] local playback codec restored: sampleRate=%u channels=%u\n",
+        (unsigned int)audio_format_info->samprate,
+        (unsigned int)audio_format_info->nChans);
     //只要DAC的开关不会影响采音，就可以直接开关DAC，而不用开关HP
     /* 启动PA */
     if(ENABLE == pa_cmd)

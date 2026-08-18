@@ -7,6 +7,7 @@ system_msg="$root/projects/offline_asr_llm_aiot_iis_sample/app/app_main/system_m
 protocol="$root/projects/offline_asr_llm_aiot_iis_sample/app/app_main/ai_uart_i2s_protocol.c"
 pre_result="$root/components/audio_pre_rslt_iis_out/ci130x_audio_pre_rslt_out.c"
 player="$root/components/player/audio_play/audio_play_process.c"
+player_device="$root/components/player/audio_play/audio_play_device.c"
 package_bat="$root/projects/offline_asr_llm_aiot_iis_sample/firmware/合成分区bin文件.bat"
 prompt_h="$root/components/cmd_info/prompt_player.h"
 prompt_c="$root/components/cmd_info/prompt_player.c"
@@ -37,6 +38,16 @@ assert_line 'cm_stop_codec\(PLAY_CODEC_ID,[[:space:]]*CODEC_OUTPUT\);' "$protoco
 assert_line 'sg_i2s_runtime_initialized' "$pre_result" "always-on I2S runtime lacks one-time ownership"
 assert_line 'if\(!sg_i2s_runtime_initialized\)' "$pre_result" "always-on I2S runtime is reinitialized per prompt"
 assert_line 'audio_play_apply_dac_digital_gain\(\);' "$player" "local Opus playback does not restore DAC gain"
+assert_line 'cm_config_codec\(sg_play_device_index,[[:space:]]*CODEC_OUTPUT,[[:space:]]*&sound_info\);' "$player_device" "local playback does not restore the shared codec format"
+[[ "$(grep -Ec 'audio_play_apply_dac_digital_gain\(\);' "$player_device")" -ge 2 ]] || {
+    echo "FAIL: local playback does not restore DAC gain after codec start" >&2
+    exit 1
+}
+assert_line 'local playback codec restored' "$player_device" "local playback restore diagnostics are missing"
+! grep -Eq 'pre_sample_rate|pre_nChans' "$player_device" || {
+    echo "FAIL: local playback still trusts a private shared-codec format cache" >&2
+    exit 1
+}
 [[ "$(grep -Ec 'lame --silent --cbr -b16' "$package_bat")" -eq 1 ]] || {
     echo "FAIL: prompt packager must use one 16 kbps encoding path" >&2
     exit 1
