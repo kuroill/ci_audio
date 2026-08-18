@@ -23,8 +23,8 @@ CI130X SDK 适用于CI130X系列芯片
 
 *版权归chipintelli公司所有，未经允许不得使用或修改*
 
-$env:PATH="D:\项目\ci_audio\tools\build-tools\bin;D:\项目\nuclei-gcc-9.2.0\gcc\bin;$env:PATH"
+$env:PATH="D:\Project\ci_audio\tools\build-tools\bin;D:\Project\nuclei-gcc-9.2.0\gcc\bin;$env:PATH"
 
-cd d:\项目\ci_audio\projects\offline_asr_llm_aiot_iis_sample\project_file
+cd d:\Project\ci_audio\projects\offline_asr_llm_aiot_iis_sample\project_file
 
 make -j8
