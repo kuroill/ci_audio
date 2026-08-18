@@ -27,4 +27,5 @@ $env:PATH="D:\Project\ci_audio\tools\build-tools\bin;D:\Project\nuclei-gcc-9.2.0
 
 cd d:\Project\ci_audio\projects\offline_asr_llm_aiot_iis_sample\project_file
 
-make -j8
+make clean
+make -r -j8
