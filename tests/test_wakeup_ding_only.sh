@@ -5,6 +5,9 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 config="$root/projects/offline_asr_llm_aiot_iis_sample/app/app_main/user_config.h"
 system_msg="$root/projects/offline_asr_llm_aiot_iis_sample/app/app_main/system_msg_deal.c"
 protocol="$root/projects/offline_asr_llm_aiot_iis_sample/app/app_main/ai_uart_i2s_protocol.c"
+pre_result="$root/components/audio_pre_rslt_iis_out/ci130x_audio_pre_rslt_out.c"
+player="$root/components/player/audio_play/audio_play_process.c"
+package_bat="$root/projects/offline_asr_llm_aiot_iis_sample/firmware/合成分区bin文件.bat"
 prompt_h="$root/components/cmd_info/prompt_player.h"
 prompt_c="$root/components/cmd_info/prompt_player.c"
 ding="$root/projects/offline_asr_llm_aiot_iis_sample/firmware/voice/src/[1000]ding.wav"
@@ -30,6 +33,18 @@ assert_line 'prompt combination rejected' "$prompt_c" "combination prompts are n
 
 assert_line 'wait_audio_play_idle\(' "$protocol" "wake/downlink interruption does not wait for playback idle"
 assert_line 'AI_PLAY_STOP_WAIT_MS[[:space:]]+250' "$protocol" "playback idle wait is not bounded to 250 ms"
+assert_line 'cm_stop_codec\(PLAY_CODEC_ID,[[:space:]]*CODEC_OUTPUT\);' "$protocol" "STOP_DOWNLINK does not stop the playback codec"
+assert_line 'sg_i2s_runtime_initialized' "$pre_result" "always-on I2S runtime lacks one-time ownership"
+assert_line 'if\(!sg_i2s_runtime_initialized\)' "$pre_result" "always-on I2S runtime is reinitialized per prompt"
+assert_line 'audio_play_apply_dac_digital_gain\(\);' "$player" "local Opus playback does not restore DAC gain"
+[[ "$(grep -Ec 'lame --silent --cbr -b16' "$package_bat")" -eq 1 ]] || {
+    echo "FAIL: prompt packager must use one 16 kbps encoding path" >&2
+    exit 1
+}
+! grep -Eq 'lame --silent --cbr -b64|\[1000\]ding\.wav.*\(' "$package_bat" || {
+    echo "FAIL: ding still has a special high-bitrate packaging path" >&2
+    exit 1
+}
 [[ "$(grep -Ec 'ai_uart_i2s_on_ding_done\(\);' "$system_msg")" -eq 2 ]] || {
     echo "FAIL: DING_DONE must only be emitted by the two real ding completion callbacks" >&2
     exit 1

@@ -45,6 +45,9 @@ static void uart_dma_read_irq_callback(void)
 }
 
 static audio_pre_init_tmp_t sg_init_tmp_str;
+#if (USE_IIS1_OUT_PRE_RSLT_AUDIO || USE_HP_OUT_PRE_RSLT_AUDIO) && USE_AUDIO_UPLOAD_BY_IIS
+static bool sg_i2s_runtime_initialized = false;
+#endif
 
 #define PI (3.1416926f)
 void sine_wave_generate(int16_t *sine_wave, uint32_t sample_rate, uint32_t wave_fre, uint32_t point_num)
@@ -71,10 +74,23 @@ void audio_pre_rslt_out_play_card_init(void)
 #endif
 #if USE_IIS1_OUT_PRE_RSLT_AUDIO || USE_HP_OUT_PRE_RSLT_AUDIO
 #if USE_AUDIO_UPLOAD_BY_IIS
-    audio_pre_rslt_out_codec_init();
-    ref_in_codec_registe();
-    cm_start_codec(REF_RECORD_CODEC_ID, CODEC_INPUT);
-    ai_uart_i2s_on_audio_ready();
+    /*
+     * PLAY_PRE_AUDIO_CODEC_ID and REF_RECORD_CODEC_ID form the always-on ESP
+     * uplink clock/data path. Re-registering them for every local prompt
+     * replaces codec-manager queues and allocates fresh PCM buffers while the
+     * path is live. Keep that runtime single-owned and initialize it once;
+     * only the PLAY_CODEC_ID layout above needs restoring between ESP
+     * downlink (mono) and local prompt (stereo) playback.
+     */
+    if(!sg_i2s_runtime_initialized)
+    {
+        audio_pre_rslt_out_codec_init();
+        ref_in_codec_registe();
+        cm_start_codec(REF_RECORD_CODEC_ID, CODEC_INPUT);
+        ai_uart_i2s_on_audio_ready();
+        sg_i2s_runtime_initialized = true;
+        mprintf("[AI_I2S] always-on codec runtime initialized once\n");
+    }
 #else
 #if USE_IIS1_OUT_PRE_RSLT_AUDIO
     audio_pre_rslt_out_codec_init();

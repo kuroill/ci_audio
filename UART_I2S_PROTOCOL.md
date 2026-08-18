@@ -155,7 +155,7 @@ ESP32 对以下三类命令的 ACK 必须按 status 分支处理，不能只记�
 - **`START_DOWNLINK`** 收到非 `0x00` ACK：不得开始写 DOUT 真实 PCM，继续输出静音，记录错误日志并重试一次；重试仍失败则放弃本轮下行播放，直接进入下一轮等待，不等待对端超时。
 - **`STOP_DOWNLINK`** 收到非 `0x00` ACK：立即在本地停止写入真实 PCM 并切回静音，记录错误日志、计入异常统计，不依赖 CI 侧确认。
 - **`ENTER_WAKEUP_WAIT`** 收到非 `0x00` ACK：记录错误日志并重试一次；仍失败则本地强制回到等待唤醒态，避免两端状态永久不一致。
-- **`SET_VOLUME`** 收到非 `0x00` ACK：不得更新 ESP32 NVS 或 reported；记录失败并允许上层重试。设置成功后由 ESP32 持久化，CI 每次重启恢复默认值并等待 ESP32 在握手后重新同步。
+- **`SET_VOLUME`** 收到非 `0x00` ACK：不得更新 ESP32 NVS 或 reported；记录失败并允许上层重试。设置成功后由 ESP32 持久化；ESP32 收到 CI 启动后的 `FIRMWARE_INFO` 时必须开启新运行纪元并重新同步音量，不能沿用 CI 重启前的“已同步”标记。
 
 整体音量由 ESP32 单一持久化，对外档位固定为 `1..100`。ESP32 下行 PCM 按
 `sample * percent / 250` 应用线性幅度曲线：`50` 档对应 20% PCM 基准幅度，
@@ -247,26 +247,28 @@ CI 在本次开机首次收到
 
 1. ESP32 收到服务端 result 后启动 HTTP downlink worker。
 2. ESP32 下载长度前缀 Opus 包，解码为 16 kHz mono PCM。
-3. ESP32 使用短预缓冲后发送 `START_DOWNLINK`。
+3. ESP32 的 HTTP 读取/Opus 解码生产者持续把 PCM 写入有界队列；独立播放消费者达到短预缓冲高水位后发送 `START_DOWNLINK`。网络读取不得因实时 I2S 写入而暂停。
 4. ESP32 必须等待收到 CI 对 `START_DOWNLINK` 的 ACK（status=0x00）之后，再等待 `DOWNLINK_START_SETTLE_MS`，才允许开始写入真实 TTS PCM；该延迟锚定在收到 ACK 之后，不是命令发出后的盲等定时器。若 ACK 超时或 status 非 0x00，按 6.1 处理，不写入真实 PCM。
 5. CI 丢弃 IIS0 RX 中尚未消费的旧帧，重新配置内部 DAC 的 PCM buffer 和 `16000 Hz / 16-bit / mono` 格式，解除静音，确保 PA 已开启，并设置 SDK `CI_SS_PLAY_STATE=PLAYING` 使 AEC 进入播放打断状态；全部完成后 ACK 并发送 `STATE=0x04`。
 6. ESP32 通过 I2S DOUT 写 PCM。
 7. 自然播放结束时，ESP32 写完全部 PCM 后必须继续发送 40-100 ms 全零静音 PCM，用于排空 CI 接收和播放缓冲区。
-8. 静音排空结束后，ESP32 必须发送 `STOP_DOWNLINK`；CI 收到后停止 RX-to-DAC 的 PCM 转发、静音 DAC，并设置 SDK `CI_SS_PLAY_STATE=IDLE`。由于当前 `PLAYER_CONTROL_PA=0`，PA 保持开启，IIS0 RX 也继续由常驻任务读取并丢弃静音帧。CI 随后返回 ACK 并发送 `STATE=0x02`。`STOP_DOWNLINK` 不得停止 PA、IIS0 RX、麦克风采集、AEC/SSP 或 I2S TX 上行。
+8. 静音排空结束后，ESP32 必须发送 `STOP_DOWNLINK`；CI 收到后停止 `PLAY_CODEC_ID` 输出、静音 DAC，并设置 SDK `CI_SS_PLAY_STATE=IDLE`。由于当前 `PLAYER_CONTROL_PA=0`，PA 保持开启，IIS0 RX 也继续由常驻任务读取并丢弃静音帧。CI 随后返回 ACK 并发送 `STATE=0x02`。`STOP_DOWNLINK` 不得停止 PA、IIS0 RX、麦克风采集、AEC/SSP 或 I2S TX 上行。
 9. 播放被唤醒词/真人语音打断、下行 worker 异常退出或整轮对话退出恢复时，ESP32 也必须发送 `STOP_DOWNLINK` 作为强制停止命令。
 10. ESP32 播放期间和播放后短沉降期间继续读取并丢弃上行，避免 TTS 尾音污染下一轮。
 11. 唤醒词打断本地 ding 或下行 TTS 时，CI 先请求旧播放器停止并等待其进入空闲；下一次 `START_DOWNLINK` 必须重新配置 DAC，不能沿用被 ding/`stop_play()` 改写过的播放参数。
 12. `DING_DONE` 只能由提示音真实播放完成回调发送；播放请求失败、尚未开始或被唤醒/下行打断时不得伪报完成。
+13. CI 的常驻 I2S uplink codec、reference input 和 PCM buffer 每次开机只初始化一次；本地提示音开始时只恢复 `PLAY_CODEC_ID` 的本地 stereo layout，不得重复注册常驻 codec 或替换正在运行的队列/buffer。
+14. 本地 Opus 提示音在重新配置并启动 `PLAY_CODEC_ID` 后必须重新应用 DAC digital gain，避免经历 ESP downlink 后回落到 codec 默认增益。
 
 低延迟默认值：
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| `VOICE_HTTP_PLAYBACK_PREBUFFER_MS` | 120 | 下行 PCM 预缓冲，配置读取范围 60..240 ms |
+| `VOICE_HTTP_PLAYBACK_PREBUFFER_MS` | 480 | 独立下行 PCM 队列的启动高水位，配置读取范围 480..1000 ms |
 | `VOICE_PLAYBACK_SETTLE_MS` | 400 | 播放结束后的上行沉降 drain |
 | `DOWNLINK_START_SETTLE_MS` | 30 | `START_DOWNLINK` ACK 之后 ESP32 等 CI 播放链路稳定的内部延迟 |
 
-`playback_prebuffer_pcm_bytes()` 把预缓冲硬限制在最多 240 ms，即使 `.env` 写了更大的值，也不会超过该上限。
+`playback_prebuffer_pcm_bytes()` 把启动高水位硬限制在最多 1000 ms。播放启动后网络生产者与 I2S 消费者并行运行；完成日志中的 `maxNetworkPacketGapMs` 只统计真实收包间隔，`starvationEvents/starvationWaitMs` 只由 PCM 队列实际见底产生。
 
 ### 7.5 退出对话
 

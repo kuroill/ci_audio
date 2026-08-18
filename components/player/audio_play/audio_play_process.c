@@ -1955,6 +1955,8 @@ void task_audio_play(void *pvParameters)
 
             cm_start_codec(PLAY_CODEC_ID, CODEC_OUTPUT);
             cm_set_codec_mute(PLAY_CODEC_ID, CODEC_OUTPUT, 3, DISABLE);
+            /* Codec reconfiguration/start may restore the DAC default gain. */
+            audio_play_apply_dac_digital_gain();
             audio_play_state = AUDIO_PLAY_STATE_PLAYING;
             ciss_set(CI_SS_PLAY_STATE, CI_SS_PLAY_STATE_PLAYING);
             char opus_read_buf[OPUS_PLAY_QUEUE_TIEM_SIZE] = {0};

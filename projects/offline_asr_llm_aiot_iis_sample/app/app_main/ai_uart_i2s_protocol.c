@@ -176,6 +176,7 @@ static void stop_downlink(void)
     if(downlink_codec_started)
     {
         cm_set_codec_mute(PLAY_CODEC_ID, CODEC_OUTPUT, 3, ENABLE);
+        cm_stop_codec(PLAY_CODEC_ID, CODEC_OUTPUT);
         ciss_set(CI_SS_PLAY_STATE, CI_SS_PLAY_STATE_IDLE);
         downlink_codec_started = 0;
     }
