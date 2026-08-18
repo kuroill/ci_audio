@@ -31,6 +31,7 @@ extern int cm_write_codec(int codec_index, void * pcm_buffer,uint32_t wait_tick)
 
 int sg_play_device_index = PLAY_CODEC_ID;
 static int32_t g_audio_play_gain = 0;
+static volatile uint16_t g_audio_play_pcm_gain_percent = 100;
 
 #ifndef PLAYBACK_DAC_DIGITAL_GAIN_DB
 #define PLAYBACK_DAC_DIGITAL_GAIN_DB 0
@@ -115,6 +116,40 @@ void audio_play_apply_dac_digital_gain(void)
 int32_t audio_play_get_vol_gain(void)
 {
     return g_audio_play_gain;
+}
+
+void audio_play_set_pcm_gain_percent(uint16_t percent)
+{
+    if(percent < 10U)
+    {
+        percent = 10U;
+    }
+    else if(percent > 500U)
+    {
+        percent = 500U;
+    }
+    g_audio_play_pcm_gain_percent = percent;
+    mprintf("[AUDIO] local PCM gain applied: percent=%u\n", (unsigned int)percent);
+}
+
+void audio_play_apply_pcm_gain(void* pcm_buf,uint32_t buf_size)
+{
+    uint16_t gain_percent = g_audio_play_pcm_gain_percent;
+    int16_t *output_pcm = (int16_t *)pcm_buf;
+    uint32_t sample_count = buf_size / sizeof(int16_t);
+    for(uint32_t i = 0; i < sample_count; i++)
+    {
+        int32_t scaled = ((int32_t)output_pcm[i] * (int32_t)gain_percent) / 100;
+        if(scaled > 32767)
+        {
+            scaled = 32767;
+        }
+        else if(scaled < -32768)
+        {
+            scaled = -32768;
+        }
+        output_pcm[i] = (int16_t)scaled;
+    }
 }
 
 
@@ -229,7 +264,7 @@ void audio_play_hw_stop(FunctionalState pa_cmd)
  * @brief 向硬件写入音频数据
  * 
  */
-int32_t audio_play_hw_write_data(void* pcm_buf,uint32_t buf_size)
+static int32_t audio_play_hw_write_data_internal(void* pcm_buf,uint32_t buf_size,uint8_t apply_pcm_gain)
 {
     uint32_t p = 0;
     cm_get_pcm_buffer(sg_play_device_index,&p,portMAX_DELAY);
@@ -238,8 +273,22 @@ int32_t audio_play_hw_write_data(void* pcm_buf,uint32_t buf_size)
         return AUDIO_PLAY_OS_FAIL;
     }
     MASK_ROM_LIB_FUNC->newlibcfunc.memcpy_p((void*)p, pcm_buf, buf_size);
+    if(apply_pcm_gain)
+    {
+        audio_play_apply_pcm_gain((void*)p, buf_size);
+    }
     cm_write_codec(sg_play_device_index,(void*)p,portMAX_DELAY);
     return AUDIO_PLAY_OS_SUCCESS;
+}
+
+int32_t audio_play_hw_write_data(void* pcm_buf,uint32_t buf_size)
+{
+    return audio_play_hw_write_data_internal(pcm_buf, buf_size, 1U);
+}
+
+int32_t audio_play_hw_write_data_raw(void* pcm_buf,uint32_t buf_size)
+{
+    return audio_play_hw_write_data_internal(pcm_buf, buf_size, 0U);
 }
 
 

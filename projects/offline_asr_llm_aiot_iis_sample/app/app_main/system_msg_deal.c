@@ -76,11 +76,15 @@ struct sys_manage_type
     .wakeup_state = SYS_STATE_UNWAKEUP,
     .user_msg_state = USERSTATE_WAIT_MSG,
     .pause_asr_count = 0,
-    .volset = VOLUME_MAX + 1,
+    .volset = VOLUME_DEFAULT,
     #if USE_AEC_MODULE
     .intercept_timer_handle = 0,
     #endif
 };
+
+/* ESP32 owns runtime volume after SET_VOLUME for the current boot. Before that command arrives,
+ * the stock CI local volume path remains available as a fallback. */
+static volatile uint8_t esp_volume_override_active = 0;
 
 
 /* 唤醒互斥锁 */
@@ -684,10 +688,19 @@ uint8_t vol_set(char vol)
     if(vol <= VOLUME_MAX && vol >= VOLUME_MIN && sys_manage_data.volset != vol)
     {
         sys_manage_data.volset = vol;
-        audio_play_set_vol_gain(VOLUME_OUTPUT_MAX_PERCENT * vol / VOLUME_MAX);
-        cinv_item_write(NVDATA_ID_VOLUME, sizeof(sys_manage_data.volset), &sys_manage_data.volset);
+        if(!esp_volume_override_active)
+        {
+            audio_play_set_vol_gain(VOLUME_OUTPUT_MAX_PERCENT * vol / VOLUME_MAX);
+        }
     }
     return sys_manage_data.volset;
+}
+
+void vol_set_from_esp_percent(uint16_t percent)
+{
+    esp_volume_override_active = 1;
+    audio_play_set_vol_gain(VOLUME_OUTPUT_MAX_PERCENT);
+    audio_play_set_pcm_gain_percent(percent);
 }
 
 uint8_t vol_get(void)
@@ -1235,18 +1248,11 @@ void UserTaskManageProcess(void *p_arg)
                 /* 音频采集任务消息，目前处理音频采集开启完成，在这里播放欢迎词 */
                 case SYS_MSG_TYPE_AUDIO_IN_STARTED:
                 {
-                    uint8_t volume;
-                    uint16_t real_len;
-
-                    /* 从nvdata里读取播放音量 */
-                    if(CINV_OPER_SUCCESS != cinv_item_read(NVDATA_ID_VOLUME, sizeof(volume), &volume, &real_len))
-                    {
-                        /* nvdata内无播放音量则配置为初始默认音量并写入nv */
-                        volume = VOLUME_DEFAULT;
-                        cinv_item_init(NVDATA_ID_VOLUME, sizeof(volume), &volume);
-                    }
-                    /* 音量设置 */
-                    vol_set(volume);
+                    /* 音量的持久化 owner 是 ESP32。CI 每次开机使用默认音量，
+                     * ESP32 有保存值时会在握手后通过 SET_VOLUME 覆盖。 */
+                    esp_volume_override_active = 0;
+                    audio_play_set_vol_gain(VOLUME_OUTPUT_MAX_PERCENT);
+                    audio_play_set_pcm_gain_percent(100U);
 
                     #if (EXCEPTION_RST_SKIP_BOOT_PROMPT)
                     if (RETURN_OK != scu_get_system_reset_state())

@@ -33,7 +33,7 @@
 | 信号 | CI1306 开发板 | ESP32 GPIO | 方向 | 说明 |
 |---|---|---:|---|---|
 | UART TX1 | PB7 / SDA / TX1 | GPIO16 / UART_RX | CI -> ESP32 | CI 发送 PING、WAKE、UPLINK_READY、DING_DONE、STATE、ACK |
-| UART RX1 | PC0 / SCL / RX1 | GPIO15 / UART_TX | ESP32 -> CI | ESP32 发送 PONG、START_DOWNLINK、STOP_DOWNLINK、ENTER_WAKEUP_WAIT |
+| UART RX1 | PC0 / SCL / RX1 | GPIO15 / UART_TX | ESP32 -> CI | ESP32 发送 PONG、START_DOWNLINK、STOP_DOWNLINK、SET_VOLUME、ENTER_WAKEUP_WAIT |
 | GND | GND | GND | - | 两板必须共地 |
 
 左侧 `PA2/TX1`、`PA3/RX1` 不用于 UART，因为已固定分配给 I2S。
@@ -138,6 +138,7 @@ A5 5A VER TYPE SEQ LEN_L LEN_H PAYLOAD CRC8
 | `0x18` | `FIRMWARE_INFO` | CI -> ESP32 | `[format, sw_major, sw_minor, sw_patch, hw_major, hw_minor, hw_patch, active_slot, boot_state]` | CI 首次握手后报告当前完整固件身份；ESP32 仅在字段与目标 FW_V4 一致且 `boot_state=0` 时确认 OTA 成功 |
 | `0x22` | `START_DOWNLINK` | ESP32 -> CI | 空 | CI 排空旧 RX 帧、重配 mono DAC、解除静音并打开 PA，成功后 ACK |
 | `0x23` | `STOP_DOWNLINK` | ESP32 -> CI | 空 | CI 停止 PCM 转发、静音 DAC、保持 PA 与 IIS RX/TX 常开，回 `STATE=0x02` 并 ACK |
+| `0x24` | `SET_VOLUME` | ESP32 -> CI | `[percent:u16le]`，范围 `10..500` | 设置本次开机的总音量；CI 本地提示音 PCM 应用相同 percent，CI 不持久化，成功后 ACK |
 | `0x25` | `ENTER_WAKEUP_WAIT` | ESP32 -> CI | 空 | CI 退出对话态、回 `STATE=0x01` 并 ACK |
 | `0x28` | `ENTER_OTA_MODE` | ESP32 -> CI | 空 | 当前 user_code 写入 OTA 标志并返回 ACK，随后软件复位进入原厂 updater |
 
@@ -154,6 +155,14 @@ ESP32 对以下三类命令的 ACK 必须按 status 分支处理，不能只记�
 - **`START_DOWNLINK`** 收到非 `0x00` ACK：不得开始写 DOUT 真实 PCM，继续输出静音，记录错误日志并重试一次；重试仍失败则放弃本轮下行播放，直接进入下一轮等待，不等待对端超时。
 - **`STOP_DOWNLINK`** 收到非 `0x00` ACK：立即在本地停止写入真实 PCM 并切回静音，记录错误日志、计入异常统计，不依赖 CI 侧确认。
 - **`ENTER_WAKEUP_WAIT`** 收到非 `0x00` ACK：记录错误日志并重试一次；仍失败则本地强制回到等待唤醒态，避免两端状态永久不一致。
+- **`SET_VOLUME`** 收到非 `0x00` ACK：不得更新 ESP32 NVS 或 reported；记录失败并允许上层重试。设置成功后由 ESP32 持久化，CI 每次重启恢复默认值并等待 ESP32 在握手后重新同步。
+
+整体音量由 ESP32 单一持久化。ESP32 下行 PCM 与 CI 本地提示音 PCM 均直接应用同一
+`percent`，CI DAC 固定为 100。ESP 下行进入 CI 后走 raw 写入路径，不会再次乘以 CI
+提示音增益。超过 100 的设置可能使峰值 PCM 削波，量产音频需要按实际素材和扬声器
+能力验证。CI 在本次开机首次收到
+`SET_VOLUME` 后，ESP32 成为运行期音量 owner，CI 示例工程残留的本地音量调节路径
+不得再覆盖实际 DAC；若 ESP32 始终未发送，则 CI 保持默认/本地回退行为。
 
 `约 3000ms` 的对端超时（见 7.1）是链路真正断开时的兜底手段，不是命令执行失败时唯一的恢复路径。
 

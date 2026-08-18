@@ -677,6 +677,7 @@ static int32_t audio_play_decode_continue(void)
 
                 /* 读出数据，写入播放设备硬件，更新解码buf */
                 sonicReadShortFromStream(sonic_stream, (short *)decbuf, samplesWritten / audio_format_info.nChans);
+                audio_play_apply_pcm_gain(decbuf, audio_play_output_size);
                 // audio_play_hw_write_data(decbuf, audio_play_output_size);
                 cm_write_codec(sg_play_device_index, decbuf, portMAX_DELAY);
                 // decbuf = get_next_pcm_buff((audio_play_output_size/2/MIN_OUTPUTBUFF_SIZE) + (audio_play_output_size%(2*MIN_OUTPUTBUFF_SIZE)?1:0));
@@ -728,11 +729,13 @@ static int32_t audio_play_decode_continue(void)
                     uint32_t ret_buf;
                     cm_get_pcm_buffer(sg_play_device_index, &ret_buf, portMAX_DELAY);
                     memcpy(ret_buf, decbuf, audio_play_output_size);
+                    audio_play_apply_pcm_gain((void *)ret_buf, audio_play_output_size);
                     cm_write_codec(sg_play_device_index, ret_buf, portMAX_DELAY);
                     audio_play_hw_start(DISABLE, &audio_format_info); // TODO HSL 参数需要传进来
                 }
                 else
-                {                 
+                {
+                    audio_play_apply_pcm_gain(decbuf, audio_play_output_size);
                     cm_write_codec(sg_play_device_index, decbuf, portMAX_DELAY);
                 }
                 // decbuf = get_next_pcm_buff((audio_play_output_size/2/MIN_OUTPUTBUFF_SIZE) + (audio_play_output_size%(2*MIN_OUTPUTBUFF_SIZE)?1:0));
@@ -793,6 +796,7 @@ static int32_t audio_play_decode_continue(void)
                 int samplesWritten = audio_play_output_size / 2; // 单位为short型
                 MASK_ROM_LIB_FUNC->newlibcfunc.memset_p(decbuf, 0x0, audio_play_output_size);
                 sonicReadShortFromStream(sonic_stream, (short *)decbuf, samplesWritten / audio_format_info.nChans);
+                audio_play_apply_pcm_gain(decbuf, audio_play_output_size);
                 // audio_play_hw_write_data(decbuf, audio_play_output_size);
                 // cm_write_codec(sg_play_device_index, decbuf,portMAX_DELAY);  //TODO HSL
                 cm_write_codec(sg_play_device_index, decbuf, portMAX_DELAY);

@@ -39,6 +39,7 @@
 #define AI_UART_MSG_FIRMWARE_INFO 0x18
 #define AI_UART_MSG_START_DOWNLINK 0x22
 #define AI_UART_MSG_STOP_DOWNLINK 0x23
+#define AI_UART_MSG_SET_VOLUME 0x24
 #define AI_UART_MSG_ENTER_WAKEUP_WAIT 0x25
 #define AI_UART_MSG_ENTER_OTA_MODE 0x28
 
@@ -207,7 +208,7 @@ static void downlink_task(void *arg)
             {
                 mono_pcm[i] = input_pcm[2 * i];
             }
-            if(AUDIO_PLAY_OS_SUCCESS == audio_play_hw_write_data(mono_pcm, sample_count * sizeof(int16_t)))
+            if(AUDIO_PLAY_OS_SUCCESS == audio_play_hw_write_data_raw(mono_pcm, sample_count * sizeof(int16_t)))
             {
                 downlink_bytes += sample_count * sizeof(int16_t);
             }
@@ -334,6 +335,31 @@ void ai_uart_i2s_handle_command(const ai_uart_i2s_command_t *cmd)
         stop_downlink();
         send_state(AI_UART_STATE_LISTENING);
         break;
+    case AI_UART_MSG_SET_VOLUME:
+    {
+        uint16_t requested_percent;
+        if(2U != cmd->len)
+        {
+            send_ack(cmd->seq, AI_UART_ACK_FAILED);
+            mprintf("[AUDIO] runtime volume rejected reason=invalid_length len=%u\n",
+                (unsigned int)cmd->len);
+            break;
+        }
+        requested_percent = (uint16_t)cmd->payload[0] | ((uint16_t)cmd->payload[1] << 8);
+        if((requested_percent < 10U) || (requested_percent > 500U))
+        {
+            send_ack(cmd->seq, AI_UART_ACK_FAILED);
+            mprintf("[AUDIO] runtime volume rejected percent=%u range=10..500\n",
+                (unsigned int)requested_percent);
+            break;
+        }
+        vol_set_from_esp_percent(requested_percent);
+        send_ack(cmd->seq, AI_UART_ACK_OK);
+        mprintf("[AUDIO] runtime volume applied requestedPercent=%u promptPercent=%u persisted=false\n",
+            (unsigned int)requested_percent,
+            (unsigned int)requested_percent);
+        break;
+    }
     case AI_UART_MSG_ENTER_WAKEUP_WAIT:
         send_ack(cmd->seq, AI_UART_ACK_OK);
         stop_downlink();

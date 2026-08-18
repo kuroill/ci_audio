@@ -203,6 +203,7 @@ bool get_mute_voice_in_state( void );
 void default_play_done_callback(cmd_handle_t cmd_handle);
 uint8_t vol_set(char vol);
 uint8_t vol_get(void);
+void vol_set_from_esp_percent(uint16_t percent);
 void sys_ignore_exit_msg_in_queue();
 void pause_asr(uint8_t voice_in_mute, uint8_t pause_asr_task);
 void resume_asr(void);
