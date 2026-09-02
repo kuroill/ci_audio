@@ -181,6 +181,7 @@ chipintelli提供的部分开发板和模组，可以通过下面的宏选择，
 #define PLAY_OTHER_CMD_EN               0      //是否在识别到命令词时播放提示音。1:是 0:否。
 #define ADAPTIVE_THRESHOLD              0
 #define ASR_SKIP_FRAME_CONFIG           0
+#define MAX_STOP_CFD_ENABLE             1      //识别分数足够高时提前结束，缩短唤醒提示音响应延迟。
 #define EXIT_WAKEUP_TIME                30*1000   //退出唤醒超时时间,单位毫秒。超过此配置指定的时间长度内没有识别到任何命令词，就会切换到只监听唤词状态。
     
 //**播放器配置  
