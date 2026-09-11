@@ -44,7 +44,13 @@ SHARE_SRAM_SIZE            = 0x400;
 SRAM_START_ADDR            = 0x1ff51000;
 SRAM_END_ADDR              = SDK_ALG_PRO_SRAM_HOST_AEC_DENOISE_NN_END_ADDR;
 SRAM_SIZE                  = (SRAM_END_ADDR - SRAM_START_ADDR);
-SYS_HEAP_SIZE              = (1024*160);
+/*
+ * V01862's dedicated wake-up language network is larger than V00994 and
+ * needs more decoder heap at runtime. Hardware logs still show about 20 KB
+ * free in the FreeRTOS heap when the ASR heap is exhausted, so transfer 8 KB
+ * to the decoder heap while retaining about 12 KB of observed system margin.
+ */
+SYS_HEAP_SIZE              = (1024*152);
 
 /* ASSERT((SRAM_END_ADDR - SRAM_START_ADDR) == (ROM_SIZE + FHEAP_SIZE + ASR_USED_SIZE + RAM_SIZE), "RAM config error!"); */
 

@@ -19,6 +19,9 @@
 
 static int asr_malloc_times = 0;
 static int asr_free_times = 0;
+static uint32_t decoder_malloc_fail_count = 0;
+
+extern int get_heap_bytes_remaining_size(void);
 
 // /**
 //  * @brief dnn hard out buf used malloc function
@@ -123,6 +126,14 @@ void *decoder_port_malloc(int size)
         char *ptr ;
         // ptr = (char*)pvPortMalloc(size);
         ptr = malloc(size);
+        if ((NULL == ptr) && (decoder_malloc_fail_count < 4))
+        {
+            decoder_malloc_fail_count++;
+            mprintf("[ASR_MEM] decoder malloc failed size=%d tail_free=%d count=%u\n",
+                    size,
+                    get_heap_bytes_remaining_size(),
+                    decoder_malloc_fail_count);
+        }
         return ptr;
     }
     return NULL;
