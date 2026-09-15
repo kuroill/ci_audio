@@ -113,7 +113,9 @@ pwk_config_t ci_pwk_config =
 denoise_nn_config_t ai_denoise_config = 
 {
 	.alg_enable = true,
-	.alpha_forget = 0.75f,
+	/* Moderate temporal smoothing suppresses frame-to-frame musical noise
+	 * while retaining consonant detail for ASR and voiceprint. */
+	.alpha_forget = 0.85f,
 	.denoise_mode = 0
 };
 

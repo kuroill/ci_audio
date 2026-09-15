@@ -461,6 +461,9 @@ static void task_init(void *p_arg)
     #if (!COMMAND_LINE_CONSOLE_EN)
     //语音系统准备OK
     cias_send_cmd(CIAS_AUDIO_SYS_READY, DEF_FILL); 
+    /* Keep the SDK task/heap monitor available for temporary diagnostics,
+     * but do not leave it resident in production audio builds. */
+    #if 0
     while(1)
     {
         UBaseType_t ArraySize = 20;
@@ -490,9 +493,10 @@ static void task_init(void *p_arg)
         vPortFree(StatusArray);
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
-    #else
-    vTaskDelete(NULL);
     #endif
+    #endif
+    /* Initialization is complete. Release this task and its stack. */
+    vTaskDelete(NULL);
 }
 
 /**
