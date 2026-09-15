@@ -923,7 +923,15 @@ void cm_get_pcm_buffer(int codec_index,uint32_t* ret_buf,uint32_t wait_tick)
         ci_logdebug(LOG_AUDIO_PLAY, "decode,%x\n", ret);
         if (rst != pdTRUE)
         {
-            mprintf("no pcm buffer\n");
+            /*
+             * The continuous I2S uplink is non-blocking by design. Its caller
+             * counts a temporary buffer shortage; printing every 16 ms here
+             * would further starve the real-time audio path.
+             */
+            if((PLAY_PRE_AUDIO_CODEC_ID != codec_index) || (0 != wait_tick))
+            {
+                mprintf("no pcm buffer\n");
+            }
         }
     }while(0);
 

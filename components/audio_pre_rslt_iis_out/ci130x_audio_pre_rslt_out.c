@@ -47,6 +47,8 @@ static void uart_dma_read_irq_callback(void)
 static audio_pre_init_tmp_t sg_init_tmp_str;
 #if (USE_IIS1_OUT_PRE_RSLT_AUDIO || USE_HP_OUT_PRE_RSLT_AUDIO) && USE_AUDIO_UPLOAD_BY_IIS
 static bool sg_i2s_runtime_initialized = false;
+static uint32_t sg_i2s_uplink_dropped_frames = 0;
+static bool sg_i2s_uplink_buffer_starved = false;
 #endif
 
 #define PI (3.1416926f)
@@ -181,8 +183,20 @@ void audio_pre_rslt_upload_by_iis(int16_t *left, int16_t *right, ci_wrapfft_audi
         cm_get_pcm_buffer(PLAY_PRE_AUDIO_CODEC_ID, &write_pcm_addr, 0); // TODO HSL
         if (0 == write_pcm_addr)
         {
-            mprintf("write_pcm_addr buffer is overflow\r\n");
+            sg_i2s_uplink_dropped_frames++;
+            sg_i2s_uplink_buffer_starved = true;
             return;
+        }
+        if(sg_i2s_uplink_buffer_starved)
+        {
+            /* Never format logs from an ISR/trap audio callback. */
+            if(!check_curr_trap())
+            {
+                mprintf("[AI_I2S] uplink resumed dropped=%u\n",
+                    (unsigned int)sg_i2s_uplink_dropped_frames);
+            }
+            sg_i2s_uplink_buffer_starved = false;
+            sg_i2s_uplink_dropped_frames = 0;
         }
         int16_t *pcm_data_p = (int16_t *)write_pcm_addr;
         for (int i = 0; i < num; i++)
@@ -427,6 +441,10 @@ void audio_pre_rslt_stop(void)
 {
 #if USE_IIS1_OUT_PRE_RSLT_AUDIO
     cm_stop_codec(PLAY_PRE_AUDIO_CODEC_ID, CODEC_OUTPUT);
+#if USE_AUDIO_UPLOAD_BY_IIS
+    sg_i2s_uplink_dropped_frames = 0;
+    sg_i2s_uplink_buffer_starved = false;
+#endif
 #endif
 
 #if USE_HP_OUT_PRE_RSLT_AUDIO

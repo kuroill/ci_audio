@@ -382,6 +382,17 @@ void audio_in_manage_inner_task(void *p)
     ciss_set(CI_SS_MIC_VOICE_STATUE, CI_SS_MIC_VOICE_NORMAL);
     xTaskResumeAll();
 
+#if !AUDIO_IN_FROM_DMIC
+    /*
+     * The hardware ALC changes microphone PGA gain with a 2 ms attack/decay.
+     * That gain pumping is preserved by AEC/NN and makes cloud ASR/voiceprint
+     * audio sound unstable. Keep the analog microphone at the AEC baseline;
+     * the right/reference channel remains owned by the AEC module.
+     */
+    cm_set_codec_alc(HOST_MIC_RECORD_CODEC_ID, CM_CHA_LEFT, DISABLE);
+    cm_set_codec_adc_gain(HOST_MIC_RECORD_CODEC_ID, CM_CHA_LEFT, 20);
+#endif
+
 #if !NO_ASR_FLOW
     sys_msg_t send_msg;
     send_msg.msg_type = SYS_MSG_TYPE_AUDIO_IN_STARTED;
